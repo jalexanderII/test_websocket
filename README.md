@@ -25,48 +25,48 @@ A real-time chat application built with FastAPI, WebSocket, React, and OpenAI in
 
 1. Clone the repository:
 
-```bash
-git clone <repository-url>
-cd chat-app
-```
+    ```bash
+    git clone <repository-url>
+    cd chat-app
+    ```
 
 2. Create and activate a virtual environment:
 
-```bash
-uv venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-```
+    ```bash
+    uv venv
+    source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+    ```
 
 3. Install dependencies:
 
-```bash
-uv sync
-```
+    ```bash
+    uv sync
+    ```
 
 4. Create a `.env` file in the root directory with the following content:
 
-```
-DATABASE_URL=sqlite:///./chat.db
-OPENAI_API_KEY=your_openai_api_key_here
-MODEL_NAME=gpt-4o-mini
-HOST=0.0.0.0
-PORT=8000
-ENVIRONMENT=development
-REDIS_HOST=localhost
-REDIS_PORT=6379
-```
+    ```env
+    DATABASE_URL=sqlite:///./chat.db
+    OPENAI_API_KEY=your_openai_api_key_here
+    MODEL_NAME=gpt-4o-mini
+    HOST=0.0.0.0
+    PORT=8000
+    ENVIRONMENT=development
+    REDIS_HOST=localhost
+    REDIS_PORT=6379
+    ```
 
 5. Start Redis server (make sure Redis is installed):
 
-```bash
-redis-server
-```
+    ```bash
+    redis-server
+    ```
 
 6. Run the backend application:
 
-```bash
-python -m app.main
-```
+    ```bash
+    python -m app.main
+    ```
 
 The backend will be available at `http://localhost:8005`
 
@@ -74,21 +74,21 @@ The backend will be available at `http://localhost:8005`
 
 1. Navigate to the frontend directory:
 
-```bash
-cd chat-frontend
-```
+    ```bash
+    cd chat-frontend
+    ```
 
 2. Install dependencies:
 
-```bash
-bun install
-```
+    ```bash
+    bun install
+    ```
 
 3. Start the development server:
 
-```bash
-bun run dev
-```
+    ```bash
+    bun run dev
+    ```
 
 The frontend will be available at `http://localhost:5173`
 
