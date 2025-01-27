@@ -1,6 +1,6 @@
 from redis_data_structures import ConnectionManager
 from datetime import timedelta
-from env import (
+from config.env import (
     REDIS_HOST,
     REDIS_PORT,
     REDIS_DB,

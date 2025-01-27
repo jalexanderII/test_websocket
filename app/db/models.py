@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey, Text
 from sqlalchemy.orm import relationship
-from database import Base
+from db.database import Base
 
 
 class UserDB(Base):
@@ -18,7 +18,7 @@ class UserDB(Base):
     )
     is_active = Column(Boolean, default=True)
 
-    chats = relationship("Chat", back_populates="user")
+    chats = relationship("ChatDB", back_populates="user", cascade="all, delete-orphan")
 
 
 class ChatDB(Base):
@@ -34,8 +34,10 @@ class ChatDB(Base):
         onupdate=datetime.now(timezone.utc),
     )
 
-    user = relationship("User", back_populates="chats")
-    messages = relationship("Message", back_populates="chat")
+    messages = relationship(
+        "MessageDB", back_populates="chat", cascade="all, delete-orphan"
+    )
+    user = relationship("UserDB", back_populates="chats")
 
 
 class MessageDB(Base):
@@ -49,5 +51,5 @@ class MessageDB(Base):
     timestamp = Column(DateTime, default=datetime.now(timezone.utc))
     task_id = Column(String, nullable=True)
 
-    chat = relationship("Chat", back_populates="messages")
-    user = relationship("User")
+    chat = relationship("ChatDB", back_populates="messages")
+    user = relationship("UserDB")
