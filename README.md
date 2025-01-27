@@ -110,16 +110,8 @@ Send messages in the following JSON format:
 {
     "action": "send_message",
     "chat_id": "123",
-    "content": "Your message here"
-}
-```
-
-To abort a running AI response:
-
-```json
-{
-    "action": "abort",
-    "chat_id": "123"
+    "content": "Your message here",
+    "response_model": false
 }
 ```
 
@@ -132,12 +124,11 @@ User/AI Message:
 ```json
 {
     "type": "message",
-    "data": {
+    "message": {
         "id": "1",
-        "chat_id": "123",
         "content": "Message content",
-        "role": "user",
-        "created_at": "2024-01-27T00:00:00Z"
+        "is_ai": false,
+        "timestamp": "2024-01-27T00:00:00Z"
     }
 }
 ```
@@ -147,10 +138,17 @@ AI Stream Token:
 ```json
 {
     "type": "token",
-    "data": {
-        "chat_id": "123",
-        "content": "Next token from AI"
-    }
+    "token": "Next token from AI",
+    "task_id": "123"
+}
+```
+
+Generation Complete:
+
+```json
+{
+    "type": "generation_complete",
+    "task_id": "123"
 }
 ```
 
@@ -159,9 +157,7 @@ Error:
 ```json
 {
     "type": "error",
-    "data": {
-        "message": "Error description"
-    }
+    "message": "Error description"
 }
 ```
 
