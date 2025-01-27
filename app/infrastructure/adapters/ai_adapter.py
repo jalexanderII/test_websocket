@@ -6,11 +6,18 @@ from typing import (
     TypedDict,
     Literal,
     cast,
+    Type,
+    TypeVar,
 )
-from openai import AsyncOpenAI, AsyncStream
+from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
 from config import OPENAI_API_KEY, MODEL_NAME
 from domain.services.ai_model import AIModel
+from pydantic import BaseModel
+import os
+
+
+T = TypeVar("T", bound=BaseModel)
 
 
 class ChatMessage(TypedDict):
@@ -22,7 +29,6 @@ class OpenAIAdapter(AIModel):
     def __init__(self):
         self.client = AsyncOpenAI(api_key=OPENAI_API_KEY)
         self.model = MODEL_NAME
-        self.current_stream: Optional[AsyncStream] = None
 
     def _convert_to_openai_messages(
         self, messages: Sequence[ChatMessage]
@@ -52,12 +58,39 @@ class OpenAIAdapter(AIModel):
                 messages=messages,
                 stream=True,
             )
-            self.current_stream = stream
+
             async for chunk in stream:
                 if chunk.choices[0].delta.content is not None:
                     yield chunk.choices[0].delta.content
         except Exception as e:
             print(f"Error in stream_response: {e}")
+            raise
+
+    async def stream_structured_response(
+        self,
+        prompt: str,
+        response_model: Type[T],
+        history: Optional[Sequence[ChatMessage]] = None,
+    ) -> AsyncGenerator[T, None]:
+        try:
+            messages = self._convert_to_openai_messages(history) if history else []
+            messages.append(
+                cast(
+                    ChatCompletionMessageParam,
+                    {"role": "user", "content": prompt},
+                )
+            )
+
+            async with self.client.beta.chat.completions.stream(
+                model=self.model,
+                messages=messages,
+                response_format=response_model,
+            ) as stream:
+                async for event in stream:
+                    if event.type == "content.delta" and event.parsed is not None:
+                        yield cast(T, event.parsed)
+        except Exception as e:
+            print(f"Error in stream_structured_response: {e}")
             raise
 
     async def generate_response(
@@ -82,15 +115,25 @@ class OpenAIAdapter(AIModel):
             print(f"Error in generate_response: {e}")
             raise
 
-    async def abort(self) -> None:
-        if self.current_stream:
-            await self.current_stream.close()
-            self.current_stream = None
-
 
 class AIAdapter:
     def __init__(self):
-        pass
+        self.client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+    async def generate_stream(self, prompt: str) -> AsyncGenerator[str, None]:
+        try:
+            stream = await self.client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "user", "content": prompt}],
+                stream=True,
+            )
+
+            async for chunk in stream:
+                if chunk.choices[0].delta.content is not None:
+                    yield chunk.choices[0].delta.content
+        except Exception as e:
+            print(f"Error in AI generation: {e}")
+            raise
 
     def generate_response(self, messages):
         # Mock implementation for now

@@ -1,4 +1,5 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from typing import Dict, Set
 import json
@@ -6,7 +7,13 @@ import uuid
 
 from infrastructure.db.database import get_db
 from application.services.chat_service import ChatService
-from application.task_manager import TaskManager
+
+
+# Define response model at module level
+class StrucResponse(BaseModel):
+    answer: str
+    reason: str
+
 
 router = APIRouter()
 
@@ -54,6 +61,7 @@ async def websocket_endpoint(
                 if action == "send_message":
                     chat_id = message_data.get("chat_id")
                     content = message_data.get("content")
+                    response_model = message_data.get("response_model")
 
                     # Save user message
                     message = await chat_service.send_message(chat_id, user_id, content)
@@ -75,26 +83,41 @@ async def websocket_endpoint(
                     # Stream AI response
                     task_id = str(uuid.uuid4())
 
-                    async def stream_wrapper():
+                    if response_model:
+                        print(f"Streaming structured response for chat_id: {chat_id}")
+                        async for chunk in chat_service.stream_structured_ai_response(
+                            chat_id, user_id, content, response_model=StrucResponse
+                        ):
+                            await manager.broadcast_to_user(
+                                user_id,
+                                json.dumps(
+                                    {
+                                        "type": "structured_token",
+                                        "data": chunk,
+                                        "task_id": task_id,
+                                    }
+                                ),
+                            )
+                    else:
                         async for token in chat_service.stream_ai_response(
                             chat_id, user_id, content
                         ):
                             await manager.broadcast_to_user(
-                                user_id, json.dumps({"type": "token", "token": token})
+                                user_id,
+                                json.dumps(
+                                    {
+                                        "type": "token",
+                                        "token": token,
+                                        "task_id": task_id,
+                                    }
+                                ),
                             )
-                        # Send completion notification
-                        await manager.broadcast_to_user(
-                            user_id,
-                            json.dumps(
-                                {"type": "generation_complete", "task_id": task_id}
-                            ),
-                        )
 
-                    stream_task = TaskManager.create_task(task_id, stream_wrapper())
-                    try:
-                        await stream_task
-                    finally:
-                        TaskManager.remove_task(task_id)
+                    # Send completion notification
+                    await manager.broadcast_to_user(
+                        user_id,
+                        json.dumps({"type": "generation_complete", "task_id": task_id}),
+                    )
 
                 elif action == "create_chat":
                     # Create a new chat for the user
@@ -104,12 +127,18 @@ async def websocket_endpoint(
                         json.dumps({"type": "chat_created", "chat_id": chat.id}),
                     )
 
-                elif action == "abort":
-                    task_id = message_data.get("task_id")
-                    if TaskManager.cancel_task(task_id):
-                        await chat_service.abort_response(task_id)
+                elif action == "join_chat":
+                    # Join an existing chat
+                    chat_id = message_data.get("chat_id")
+                    chat = chat_service.get_chat(chat_id)
+                    if not chat:
+                        await websocket.send_text(
+                            json.dumps({"type": "error", "message": "Chat not found"})
+                        )
+                    else:
                         await manager.broadcast_to_user(
-                            user_id, json.dumps({"type": "aborted", "task_id": task_id})
+                            user_id,
+                            json.dumps({"type": "chat_joined", "chat_id": chat.id}),
                         )
 
             except json.JSONDecodeError:

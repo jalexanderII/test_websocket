@@ -15,8 +15,7 @@ class ChatRepository:
         self.db.refresh(db_chat)
         return ChatEntity(
             id=db_chat.id,
-            user_id=str(db_chat.user_id),
-            title=db_chat.title,
+            user_id=db_chat.user_id,
             created_at=db_chat.created_at,
             updated_at=db_chat.updated_at,
         )
@@ -27,18 +26,16 @@ class ChatRepository:
             return None
         return ChatEntity(
             id=db_chat.id,
-            user_id=str(db_chat.user_id),
-            title=db_chat.title,
+            user_id=db_chat.user_id,
             created_at=db_chat.created_at,
             updated_at=db_chat.updated_at,
             messages=[
                 MessageEntity(
                     id=msg.id,
-                    user_id=str(msg.user_id),
+                    chat_id=msg.user_id,
                     content=msg.content,
                     is_ai=msg.is_ai,
                     timestamp=msg.timestamp,
-                    task_id=msg.task_id,
                 )
                 for msg in db_chat.messages
             ],
@@ -47,21 +44,19 @@ class ChatRepository:
     def add_message(self, chat_id: int, message: MessageEntity) -> MessageEntity:
         db_message = Message(
             chat_id=chat_id,
-            user_id=int(message.user_id),
+            user_id=int(message.chat_id),
             content=message.content,
             is_ai=message.is_ai,
-            task_id=message.task_id,
         )
         self.db.add(db_message)
         self.db.commit()
         self.db.refresh(db_message)
         return MessageEntity(
             id=db_message.id,
-            user_id=str(db_message.user_id),
+            chat_id=db_message.user_id,
             content=db_message.content,
             is_ai=db_message.is_ai,
             timestamp=db_message.timestamp,
-            task_id=db_message.task_id,
         )
 
     def get_user_chats(self, user_id: int) -> List[ChatEntity]:
@@ -69,8 +64,7 @@ class ChatRepository:
         return [
             ChatEntity(
                 id=chat.id,
-                user_id=str(chat.user_id),
-                title=chat.title,
+                user_id=chat.user_id,
                 created_at=chat.created_at,
                 updated_at=chat.updated_at,
             )
@@ -84,11 +78,10 @@ class ChatRepository:
         return [
             MessageEntity(
                 id=msg.id,
-                user_id=str(msg.user_id),
+                chat_id=msg.user_id,
                 content=msg.content,
                 is_ai=msg.is_ai,
                 timestamp=msg.timestamp,
-                task_id=msg.task_id,
             )
             for msg in db_chat.messages
         ]
@@ -105,11 +98,10 @@ class ChatRepository:
 
         return MessageEntity(
             id=db_message.id,
-            user_id=str(db_message.user_id),
+            chat_id=db_message.user_id,
             content=db_message.content,
             is_ai=db_message.is_ai,
             timestamp=db_message.timestamp,
-            task_id=db_message.task_id,
         )
 
     def create(self, chat):

@@ -1,11 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.orm import Session
 from typing import List
+from pydantic import BaseModel
 
 from infrastructure.db.database import get_db
 from application.services.chat_service import ChatService
-from domain.entities.chat import Chat
+from domain.entities.chat import Chat, Message
 
+class DeleteChatsRequest(BaseModel):
+    chat_ids: List[int]
 
 router = APIRouter()
 
@@ -38,3 +41,18 @@ async def abort_chat_response(
     chat_service = ChatService(db)
     await chat_service.abort_response(task_id)
     return {"status": "aborted", "task_id": task_id}
+
+
+@router.post("/chats/batch-delete", status_code=200)
+async def delete_chats(request: DeleteChatsRequest, db: Session = Depends(get_db)):
+    chat_service = ChatService(db)
+    chat_service.delete_chats(request.chat_ids)
+    return {"status": "success", "deleted_count": len(request.chat_ids)}
+
+
+@router.delete("/users/{user_id}/chats/empty")
+def delete_empty_chats(user_id: int, db: Session = Depends(get_db)):
+    """Delete all empty chats for a user."""
+    chat_service = ChatService(db)
+    deleted_count = chat_service.delete_empty_chats(user_id)
+    return {"deleted_count": deleted_count}
