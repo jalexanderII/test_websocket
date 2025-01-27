@@ -3,9 +3,9 @@ from sqlalchemy.orm import Session
 from typing import List
 from pydantic import BaseModel
 
-from app.db.database import get_db
-from app.schemas.chat import Chat
-from app.services.chat_service import ChatService
+from db.database import get_db
+from schemas.chat import Chat
+from services.chat_service import ChatService
 
 
 class DeleteChatsRequest(BaseModel):

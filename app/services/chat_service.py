@@ -16,10 +16,10 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timezone
 from pydantic import BaseModel
 from redis_data_structures import LRUCache, Queue, PriorityQueue
-from app.adapters.ai_adapter import OpenAIAdapter
-from app.config.redis_config import redis_manager
-from app.db.models import ChatDB, MessageDB
-from app.schemas.chat import Chat, Message
+from adapters.ai_adapter import OpenAIAdapter
+from config.redis_config import redis_manager
+from db.models import ChatDB, MessageDB
+from schemas.chat import Chat, Message
 
 
 T = TypeVar("T", bound=BaseModel)

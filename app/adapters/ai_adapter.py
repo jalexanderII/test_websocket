@@ -11,10 +11,10 @@ from typing import (
 )
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
-from app.config.env import OPENAI_API_KEY, MODEL_NAME
+from config.env import OPENAI_API_KEY, MODEL_NAME
 from pydantic import BaseModel
 
-from app.schemas.ai_model import AIModel
+from schemas.ai_model import AIModel
 
 
 T = TypeVar("T", bound=BaseModel)
