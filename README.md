@@ -7,7 +7,6 @@ A real-time chat application built with FastAPI, WebSocket, React, and OpenAI in
 - Real-time chat with WebSocket support
 - AI-powered responses using OpenAI's GPT models
 - Modern React frontend with TypeScript
-- Ability to abort running AI responses
 - Chat history persistence
 - Redis for managing AI response streams
 - Scalable architecture following clean architecture principles
