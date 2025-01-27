@@ -110,7 +110,10 @@ class ChatService:
 
         # Create AI message with empty content
         ai_message = MessageDB(
-            chat_id=chat_id, content="", is_ai=True, timestamp=datetime.utcnow()
+            chat_id=chat_id,
+            content="",
+            is_ai=True,
+            timestamp=datetime.now(timezone.utc),
         )
         self.db.add(ai_message)
         self.db.commit()
@@ -133,7 +136,7 @@ class ChatService:
                 )
             )
             self.db.commit()
-        except Exception as e:
+        except Exception:
             # If there's an error, save what we have
             if complete_response:
                 ai_message = self.db.merge(
@@ -187,7 +190,7 @@ class ChatService:
                     )
                 )
                 self.db.commit()
-        except Exception as e:
+        except Exception:
             # If there's an error, save what we have
             if complete_response:
                 ai_message = self.db.merge(
