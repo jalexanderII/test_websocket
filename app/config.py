@@ -20,6 +20,12 @@ ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 if not OPENAI_API_KEY:
     raise ValueError("OPENAI_API_KEY environment variable is required")
 
-
-class TestConfig:
-    DATABASE_URL = "sqlite:///./test.db"  # Use SQLite for testing
+# Redis Configuration
+REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+REDIS_DB = int(os.getenv("REDIS_DB", "0"))
+REDIS_MAX_CONNECTIONS = int(os.getenv("REDIS_MAX_CONNECTIONS", "20"))
+REDIS_RETRY_ATTEMPTS = int(os.getenv("REDIS_RETRY_ATTEMPTS", "5"))
+REDIS_CB_THRESHOLD = int(os.getenv("REDIS_CB_THRESHOLD", "10"))
+REDIS_CB_TIMEOUT_MINS = int(os.getenv("REDIS_CB_TIMEOUT_MINS", "5"))
+REDIS_SSL = os.getenv("REDIS_SSL", "false").lower() == "true"

@@ -2,13 +2,15 @@ from functools import partial
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from typing import Callable, Coroutine, Dict, Set, Any, Optional
+from typing import Callable, Coroutine, Any, Optional, Dict, Set
 import json
 import uuid
 from datetime import datetime, timezone
+from redis_data_structures import Set as RedisSet
 
 from infrastructure.db.database import get_db
 from application.services.chat_service import ChatService
+from infrastructure.redis_config import redis_manager
 
 
 # Define response model at module level
@@ -36,23 +38,28 @@ class MessageData(BaseModel):
 
 class ConnectionManager:
     def __init__(self):
-        self.active_connections: Dict[int, Set[WebSocket]] = {}
+        # Initialize Redis Set with the connection manager
+        self.active_users = RedisSet("active_users", connection_manager=redis_manager)
+        # Keep WebSocket connections in memory since they can't be serialized
+        self._connections: Dict[int, Set[WebSocket]] = {}
 
     async def connect(self, websocket: WebSocket, user_id: int):
         await websocket.accept()
-        if user_id not in self.active_connections:
-            self.active_connections[user_id] = set()
-        self.active_connections[user_id].add(websocket)
+        self.active_users.add(user_id)
+        if user_id not in self._connections:
+            self._connections[user_id] = set()
+        self._connections[user_id].add(websocket)
 
     def disconnect(self, websocket: WebSocket, user_id: int):
-        if user_id in self.active_connections:
-            self.active_connections[user_id].discard(websocket)
-            if not self.active_connections[user_id]:
-                del self.active_connections[user_id]
+        if user_id in self._connections:
+            self._connections[user_id].discard(websocket)
+            if not self._connections[user_id]:
+                del self._connections[user_id]
+                self.active_users.remove(user_id)
 
     async def broadcast_to_user(self, user_id: int, message: str):
-        if user_id in self.active_connections:
-            for connection in self.active_connections[user_id]:
+        if user_id in self._connections:
+            for connection in self._connections[user_id]:
                 await connection.send_text(message)
 
 

@@ -14,12 +14,3 @@ def get_db():
         yield db
     finally:
         db.close()
-
-
-class Database:
-    def __init__(self, url: str):
-        self.url = url
-
-    def clear_all(self):
-        """Clear all test data"""
-        pass  # Implement actual clearing logic later

@@ -17,6 +17,8 @@ from domain.entities.chat import Chat, Message, ChatDB, MessageDB
 from infrastructure.adapters.ai_adapter import OpenAIAdapter
 from datetime import datetime, timezone
 from pydantic import BaseModel
+from redis_data_structures import LRUCache, Queue, PriorityQueue
+from infrastructure.redis_config import redis_manager
 
 
 T = TypeVar("T", bound=BaseModel)
@@ -31,6 +33,14 @@ class ChatService:
     def __init__(self, db: Session):
         self.db = db
         self.structured_ai_adapter = OpenAIAdapter()
+        # Initialize Redis data structures with connection manager
+        self.chat_cache = LRUCache(
+            "chat_history", capacity=1000, connection_manager=redis_manager
+        )
+        self.message_queue = Queue("chat_messages", connection_manager=redis_manager)
+        self.priority_messages = PriorityQueue(
+            "priority_messages", connection_manager=redis_manager
+        )
 
     def _is_chat_empty(self, chat_id: int) -> bool:
         """Check if a chat has any messages."""
@@ -69,10 +79,20 @@ class ChatService:
         return Chat.model_validate(db_chat)
 
     def get_chat(self, chat_id: int) -> Optional[Chat]:
+        # Try cache first
+        cached_chat = self.chat_cache.get(str(chat_id))
+        if cached_chat:
+            return Chat.model_validate(cached_chat)
+
+        # If not in cache, get from DB
         db_chat = self.db.query(ChatDB).filter(ChatDB.id == chat_id).first()
         if not db_chat:
             return None
-        return Chat.model_validate(db_chat)
+
+        chat = Chat.model_validate(db_chat)
+        # Cache the result
+        self.chat_cache.put(str(chat_id), chat.model_dump())
+        return chat
 
     def get_user_chats(self, user_id: int) -> List[Chat]:
         db_chats = self.db.query(ChatDB).filter(ChatDB.user_id == user_id).all()
@@ -93,9 +113,7 @@ class ChatService:
         return history
 
     async def send_message(
-        self,
-        chat_id: Optional[int],
-        content: str,
+        self, chat_id: Optional[int], content: str, priority: int = 1
     ) -> Message:
         # Save user message
         user_message = MessageDB(
@@ -107,6 +125,22 @@ class ChatService:
         self.db.add(user_message)
         self.db.commit()
         self.db.refresh(user_message)
+
+        # Queue message for AI processing with priority
+        self.priority_messages.push(
+            {
+                "chat_id": chat_id,
+                "content": content,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "message_id": user_message.id,
+            },
+            priority,
+        )
+
+        # Invalidate chat cache since we added a new message
+        if chat_id:
+            self.chat_cache.remove(str(chat_id))
+
         return Message.model_validate(user_message)
 
     async def stream_ai_response(
@@ -155,6 +189,10 @@ class ChatService:
                 )
             )
             self.db.commit()
+
+            # Invalidate chat cache since we added a new message
+            self.chat_cache.remove(str(chat_id))
+
         except Exception:
             # If there's an error, save what we have
             if complete_response:
@@ -168,6 +206,8 @@ class ChatService:
                     )
                 )
                 self.db.commit()
+                # Invalidate chat cache
+                self.chat_cache.remove(str(chat_id))
             raise
 
     async def stream_structured_ai_response(
