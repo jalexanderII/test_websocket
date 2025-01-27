@@ -8,10 +8,13 @@ from typing import (
     Sequence,
     Type,
     TypeVar,
+    Callable,
+    Coroutine,
+    Any,
 )
 from sqlalchemy.orm import Session
 from domain.entities.chat import Chat, Message, ChatDB, MessageDB
-from infrastructure.adapters.ai_adapter import OpenAIAdapter, AIAdapter
+from infrastructure.adapters.ai_adapter import OpenAIAdapter
 from datetime import datetime, timezone
 from pydantic import BaseModel
 
@@ -27,8 +30,7 @@ class ChatMessage(TypedDict):
 class ChatService:
     def __init__(self, db: Session):
         self.db = db
-        self.ai_adapter = AIAdapter()  # For legacy streaming
-        self.structured_ai_adapter = OpenAIAdapter()  # For structured streaming
+        self.structured_ai_adapter = OpenAIAdapter()
 
     def _is_chat_empty(self, chat_id: int) -> bool:
         """Check if a chat has any messages."""
@@ -90,10 +92,17 @@ class ChatService:
 
         return history
 
-    async def send_message(self, chat_id: int, user_id: int, content: str) -> Message:
+    async def send_message(
+        self,
+        chat_id: Optional[int],
+        content: str,
+    ) -> Message:
         # Save user message
         user_message = MessageDB(
-            chat_id=chat_id, content=content, is_ai=False, timestamp=datetime.utcnow()
+            chat_id=chat_id,
+            content=content,
+            is_ai=False,
+            timestamp=datetime.now(timezone.utc),
         )
         self.db.add(user_message)
         self.db.commit()
@@ -101,12 +110,20 @@ class ChatService:
         return Message.model_validate(user_message)
 
     async def stream_ai_response(
-        self, chat_id: int, user_id: int, user_message: str
+        self,
+        chat_id: int,
+        user_message: str,
+        interim_message_handler: Optional[
+            Callable[[str], Coroutine[Any, Any, None]]
+        ] = None,
     ) -> AsyncGenerator[str, None]:
         # Get chat history for context
         chat = self.get_chat(chat_id)
         if not chat:
             raise ValueError("Chat not found")
+
+        # Get chat history
+        history = self._get_chat_history(chat_id)
 
         # Create AI message with empty content
         ai_message = MessageDB(
@@ -121,7 +138,9 @@ class ChatService:
         # Stream and accumulate response
         complete_response = ""
         try:
-            async for token in self.ai_adapter.generate_stream(user_message):
+            async for token in self.structured_ai_adapter.stream_response(
+                user_message, history=history
+            ):
                 complete_response += token
                 yield token
 
@@ -152,12 +171,21 @@ class ChatService:
             raise
 
     async def stream_structured_ai_response(
-        self, chat_id: int, user_id: int, user_message: str, response_model: Type[T]
+        self,
+        chat_id: int,
+        user_message: str,
+        response_model: Type[T],
+        interim_message_handler: Optional[
+            Callable[[str], Coroutine[Any, Any, None]]
+        ] = None,
     ) -> AsyncGenerator[T, None]:
         # Get chat history for context
         chat = self.get_chat(chat_id)
         if not chat:
             raise ValueError("Chat not found")
+
+        # Get chat history
+        history = self._get_chat_history(chat_id)
 
         # Create AI message with empty content
         ai_message = MessageDB(
@@ -173,7 +201,7 @@ class ChatService:
         complete_response = None
         try:
             async for chunk in self.structured_ai_adapter.stream_structured_response(
-                user_message, response_model
+                user_message, response_model, history=history
             ):
                 complete_response = chunk
                 yield chunk
@@ -204,10 +232,6 @@ class ChatService:
                 )
                 self.db.commit()
             raise
-
-    async def abort_response(self, task_id: str) -> None:
-        # Implement if needed
-        pass
 
     def delete_chats(self, chat_ids: List[int]) -> None:
         """Delete multiple chats by their IDs"""

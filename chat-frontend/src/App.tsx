@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
-import { Send, ChevronDown, Loader2, History, Trash2, X } from "lucide-react"
+import { Send, History, Trash2, X, Plus, Loader2 } from "lucide-react"
 import { atom, useAtom } from 'jotai'
 import {
   Sheet,
@@ -100,7 +100,6 @@ function App() {
   const [inputMessage, setInputMessage] = useState('');
   const [connected, setConnected] = useState(false);
   const [currentChatId, setCurrentChatId] = useState<number | null>(null);
-  const [showScrollButton, setShowScrollButton] = useState(false);
   const [isStreaming, setIsStreaming] = useAtom(streamingAtom);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [selectMode, setSelectMode] = useState(false);
@@ -117,23 +116,6 @@ function App() {
     }
   }, []);
 
-  const checkScroll = useCallback(() => {
-    const container = scrollContainerRef.current;
-    if (container) {
-      const { scrollTop, scrollHeight, clientHeight } = container;
-      const isAtBottom = Math.abs(scrollHeight - scrollTop - clientHeight) < 100;
-      setShowScrollButton(!isAtBottom);
-    }
-  }, []);
-
-  useEffect(() => {
-    const container = scrollContainerRef.current;
-    if (container) {
-      container.addEventListener('scroll', checkScroll);
-      return () => container.removeEventListener('scroll', checkScroll);
-    }
-  }, [checkScroll]);
-
   useEffect(() => {
     if (messages.length > 0) {
       const container = scrollContainerRef.current;
@@ -142,8 +124,6 @@ function App() {
         const isAtBottom = Math.abs(scrollHeight - scrollTop - clientHeight) < 100;
         if (isAtBottom) {
           scrollToBottom();
-        } else {
-          setShowScrollButton(true);
         }
       }
     }
@@ -278,46 +258,6 @@ function App() {
     };
   }, [setMessages, setIsStreaming, fetchChatHistory]);
 
-  useEffect(() => {
-    const ws = new WebSocket('ws://localhost:8005/ws/1');
-
-    ws.onopen = () => {
-      console.log('Connected to WebSocket');
-      setConnected(true);
-      ws.send(JSON.stringify({
-        action: 'create_chat'
-      }));
-    };
-
-    setupWebSocketHandlers(ws);
-    wsRef.current = ws;
-
-    return () => {
-      ws.close();
-    };
-  }, [setupWebSocketHandlers]);
-
-  const sendMessage = () => {
-    if (inputMessage.trim() && wsRef.current?.readyState === WebSocket.OPEN && currentChatId) {
-      console.log('Sending message to chat:', currentChatId);
-      const messageObj = {
-        action: 'send_message',
-        chat_id: currentChatId,
-        content: inputMessage,
-        response_model: 'StrucResponse'
-      };
-      wsRef.current.send(JSON.stringify(messageObj));
-      setInputMessage('');
-    }
-  };
-
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
-    }
-  };
-
   // Load chat messages
   const loadChat = useCallback(async (chatId: number) => {
     try {
@@ -360,6 +300,100 @@ function App() {
       console.error('Error loading chat:', error);
     }
   }, [setMessages, setupWebSocketHandlers]);
+
+  // Check URL for chat ID on load
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const urlChatId = params.get('chat');
+    if (urlChatId) {
+      const chatId = Number.parseInt(urlChatId, 10);
+      if (!Number.isNaN(chatId)) {
+        loadChat(chatId);
+      }
+    }
+  }, [loadChat]);
+
+  // Update URL when chat changes
+  useEffect(() => {
+    if (currentChatId) {
+      const newUrl = `${window.location.pathname}?chat=${currentChatId}`;
+      window.history.pushState({ chatId: currentChatId }, '', newUrl);
+    } else {
+      window.history.pushState({}, '', window.location.pathname);
+    }
+  }, [currentChatId]);
+
+  // Handle browser back/forward
+  useEffect(() => {
+    const handlePopState = (event: PopStateEvent) => {
+      const chatId = event.state?.chatId;
+      if (chatId) {
+        loadChat(chatId);
+      } else {
+        // No chat ID in history state, create new chat
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({ action: 'create_chat' }));
+        }
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [loadChat]);
+
+  const startNewChat = useCallback(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      setMessages([]);
+      wsRef.current.send(JSON.stringify({ action: 'create_chat' }));
+      setIsHistoryOpen(false);
+    }
+  }, [setMessages]);
+
+  // Update the WebSocket connection setup
+  useEffect(() => {
+    const ws = new WebSocket('ws://localhost:8005/ws/1');
+
+    ws.onopen = () => {
+      console.log('Connected to WebSocket');
+      setConnected(true);
+      
+      // Only create a new chat if there's no chat ID in the URL
+      const params = new URLSearchParams(window.location.search);
+      const urlChatId = params.get('chat');
+      if (!urlChatId) {
+        ws.send(JSON.stringify({
+          action: 'create_chat'
+        }));
+      }
+    };
+
+    setupWebSocketHandlers(ws);
+    wsRef.current = ws;
+
+    return () => {
+      ws.close();
+    };
+  }, [setupWebSocketHandlers]);
+
+  const sendMessage = () => {
+    if (inputMessage.trim() && wsRef.current?.readyState === WebSocket.OPEN && currentChatId) {
+      console.log('Sending message to chat:', currentChatId);
+      const messageObj = {
+        action: 'send_message',
+        chat_id: currentChatId,
+        content: inputMessage,
+      };
+      wsRef.current.send(JSON.stringify(messageObj));
+      setInputMessage('');
+    }
+  };
+
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  };
 
   useEffect(() => {
     fetchChatHistory();
@@ -458,6 +492,9 @@ function App() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <CardTitle className="text-2xl">Chat Interface</CardTitle>
+              <Button variant="outline" size="icon" onClick={startNewChat}>
+                <Plus className="h-4 w-4" />
+              </Button>
               <Sheet open={isHistoryOpen} onOpenChange={setIsHistoryOpen}>
                 <SheetTrigger asChild>
                   <Button variant="outline" size="icon">
@@ -585,17 +622,6 @@ function App() {
               <div ref={messagesEndRef} />
             </div>
           </div>
-
-          {showScrollButton && (
-            <Button
-              variant="secondary"
-              size="icon"
-              className="fixed bottom-[200px] right-8 rounded-full w-10 h-10 shadow-lg hover:shadow-xl transition-all duration-200 animate-bounce z-50"
-              onClick={scrollToBottom}
-            >
-              <ChevronDown className="h-5 w-5" />
-            </Button>
-          )}
 
           <div className="flex gap-2">
             <Textarea

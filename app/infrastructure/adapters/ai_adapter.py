@@ -14,7 +14,6 @@ from openai.types.chat import ChatCompletionMessageParam
 from config import OPENAI_API_KEY, MODEL_NAME
 from domain.services.ai_model import AIModel
 from pydantic import BaseModel
-import os
 
 
 T = TypeVar("T", bound=BaseModel)
@@ -114,27 +113,3 @@ class OpenAIAdapter(AIModel):
         except Exception as e:
             print(f"Error in generate_response: {e}")
             raise
-
-
-class AIAdapter:
-    def __init__(self):
-        self.client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-    async def generate_stream(self, prompt: str) -> AsyncGenerator[str, None]:
-        try:
-            stream = await self.client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": prompt}],
-                stream=True,
-            )
-
-            async for chunk in stream:
-                if chunk.choices[0].delta.content is not None:
-                    yield chunk.choices[0].delta.content
-        except Exception as e:
-            print(f"Error in AI generation: {e}")
-            raise
-
-    def generate_response(self, messages):
-        # Mock implementation for now
-        return "Test response"

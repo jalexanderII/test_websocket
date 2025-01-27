@@ -47,18 +47,3 @@ class AIModel(Protocol):
         """Generate a complete response."""
         pass
 
-
-class AIModelService:
-    def __init__(self, model: AIModel):
-        self.model = model
-
-    async def generate_response(self, prompt: str) -> str:
-        return await self.model.generate_response(prompt)
-
-    async def stream_structured_response(
-        self, prompt: str, response_model: Type[T]
-    ) -> AsyncGenerator[T, None]:
-        async for chunk in await self.model.stream_structured_response(
-            prompt, response_model
-        ):
-            yield chunk
