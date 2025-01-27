@@ -33,7 +33,7 @@ class ChatMessage(TypedDict):
 class ChatService:
     def __init__(self, db: Session):
         self.db = db
-        self.structured_ai_adapter = OpenAIAdapter()
+        self.adapter = OpenAIAdapter()
         # Initialize Redis data structures with connection manager
         self.chat_cache = LRUCache(
             "chat_history", capacity=1000, connection_manager=redis_manager
@@ -173,7 +173,7 @@ class ChatService:
         # Stream and accumulate response
         complete_response = ""
         try:
-            async for token in self.structured_ai_adapter.stream_response(
+            async for token in self.adapter.stream_response(
                 user_message, history=history
             ):
                 complete_response += token
@@ -241,7 +241,7 @@ class ChatService:
         # Stream and accumulate response
         complete_response = None
         try:
-            async for chunk in self.structured_ai_adapter.stream_structured_response(
+            async for chunk in self.adapter.stream_structured_response(
                 user_message, response_model, history=history
             ):
                 complete_response = chunk
