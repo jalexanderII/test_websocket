@@ -13,6 +13,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet"
 import { Checkbox } from "@/components/ui/checkbox"
+import useWebSocket, { ReadyState } from 'react-use-websocket'
 
 // API Types (matching backend)
 interface APIMessage {
@@ -98,14 +99,119 @@ function App() {
   const [chats, setChats] = useAtom(chatsAtom);
   const [selectedChats, setSelectedChats] = useAtom(selectedChatsAtom);
   const [inputMessage, setInputMessage] = useState('');
-  const [connected, setConnected] = useState(false);
   const [currentChatId, setCurrentChatId] = useState<number | null>(null);
   const [isStreaming, setIsStreaming] = useAtom(streamingAtom);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [selectMode, setSelectMode] = useState(false);
-  const wsRef = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  const { sendMessage: sendWebSocketMessage, readyState } = useWebSocket('ws://localhost:8005/ws/1', {
+    onMessage: (event) => {
+      const data = JSON.parse(event.data);
+      console.log('WebSocket message received:', data);
+
+      switch (data.type) {
+        case 'chat_created':
+          console.log('Chat created with ID:', data.chat_id);
+          setCurrentChatId(data.chat_id);
+          fetchChatHistory();
+          break;
+        case 'chat_joined': {
+          console.log('Joined chat:', data.chat_id);
+          setCurrentChatId(data.chat_id);
+          break;
+        }
+        case 'message': {
+          console.log('Message received:', data.message);
+          if (data.message.is_ai && !isStreaming) {
+            setIsStreaming(true);
+          }
+          const newMessage: Message = {
+            id: data.message.id,
+            text: data.message.content,
+            sender: data.message.is_ai ? 'assistant' : 'user',
+            timestamp: data.message.timestamp,
+            task_id: data.message.task_id
+          };
+          setMessages(prev => [...prev, newMessage]);
+          break;
+        }
+        case 'structured_token': {
+          console.log('Structured token received:', data.data);
+          if (!isStreaming) {
+            setIsStreaming(true);
+          }
+          setMessages(prev => {
+            const lastMessage = prev[prev.length - 1];
+            if (lastMessage && lastMessage.sender === 'assistant' && lastMessage.task_id === data.task_id) {
+              const newMessages = [...prev];
+              newMessages[newMessages.length - 1] = {
+                ...lastMessage,
+                structured: data.data
+              };
+              return newMessages;
+            }
+            const timestamp = new Date().toISOString();
+            return [...prev, {
+              id: Date.now(),
+              text: '',
+              sender: 'assistant',
+              timestamp,
+              task_id: data.task_id,
+              structured: data.data
+            }];
+          });
+          break;
+        }
+        case 'token': {
+          console.log('Token received:', data.token);
+          if (!isStreaming) {
+            setIsStreaming(true);
+          }
+          setMessages(prev => {
+            const lastMessage = prev[prev.length - 1];
+            if (lastMessage && lastMessage.sender === 'assistant' && lastMessage.task_id === data.task_id) {
+              const newMessages = [...prev];
+              newMessages[newMessages.length - 1] = {
+                ...lastMessage,
+                text: lastMessage.text + data.token
+              };
+              return newMessages;
+            }
+            const timestamp = new Date().toISOString();
+            return [...prev, {
+              id: Date.now(),
+              text: data.token,
+              sender: 'assistant',
+              timestamp,
+              task_id: data.task_id
+            }];
+          });
+          break;
+        }
+        case 'error':
+          console.error('WebSocket error:', data.message);
+          setIsStreaming(false);
+          break;
+        case 'generation_complete':
+          console.log('Generation completed for task:', data.task_id);
+          setIsStreaming(false);
+          fetchChatHistory();
+          break;
+        default:
+          console.log('Unknown message type:', data.type);
+      }
+    },
+    onClose: () => {
+      console.log('WebSocket disconnected');
+      setCurrentChatId(null);
+      setIsStreaming(false);
+    },
+    shouldReconnect: () => true,
+  });
+
+  const connected = readyState === ReadyState.OPEN;
 
   const scrollToBottom = useCallback(() => {
     if (scrollContainerRef.current) {
@@ -145,119 +251,6 @@ function App() {
     }
   }, [setChats]);
 
-  const setupWebSocketHandlers = useCallback((ws: WebSocket) => {
-    let messageInProgress = false;
-
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      console.log('WebSocket message received:', data);
-
-      switch (data.type) {
-        case 'chat_created':
-          console.log('Chat created with ID:', data.chat_id);
-          setCurrentChatId(data.chat_id);
-          fetchChatHistory();
-          break;
-        case 'chat_joined': {
-          console.log('Joined chat:', data.chat_id);
-          setCurrentChatId(data.chat_id);
-          break;
-        }
-        case 'message': {
-          console.log('Message received:', data.message);
-          if (data.message.is_ai && !messageInProgress) {
-            messageInProgress = true;
-            setIsStreaming(true);
-          }
-          const newMessage: Message = {
-            id: data.message.id,
-            text: data.message.content,
-            sender: data.message.is_ai ? 'assistant' : 'user',
-            timestamp: data.message.timestamp,
-            task_id: data.message.task_id
-          };
-          setMessages(prev => [...prev, newMessage]);
-          break;
-        }
-        case 'structured_token': {
-          console.log('Structured token received:', data.data);
-          if (!messageInProgress) {
-            messageInProgress = true;
-            setIsStreaming(true);
-          }
-          setMessages(prev => {
-            const lastMessage = prev[prev.length - 1];
-            if (lastMessage && lastMessage.sender === 'assistant' && lastMessage.task_id === data.task_id) {
-              const newMessages = [...prev];
-              newMessages[newMessages.length - 1] = {
-                ...lastMessage,
-                structured: data.data
-              };
-              return newMessages;
-            }
-            const timestamp = new Date().toISOString();
-            return [...prev, {
-              id: Date.now(),
-              text: '',
-              sender: 'assistant',
-              timestamp,
-              task_id: data.task_id,
-              structured: data.data
-            }];
-          });
-          break;
-        }
-        case 'token': {
-          console.log('Token received:', data.token);
-          if (!messageInProgress) {
-            messageInProgress = true;
-            setIsStreaming(true);
-          }
-          setMessages(prev => {
-            const lastMessage = prev[prev.length - 1];
-            if (lastMessage && lastMessage.sender === 'assistant' && lastMessage.task_id === data.task_id) {
-              const newMessages = [...prev];
-              newMessages[newMessages.length - 1] = {
-                ...lastMessage,
-                text: lastMessage.text + data.token
-              };
-              return newMessages;
-            }
-            const timestamp = new Date().toISOString();
-            return [...prev, {
-              id: Date.now(),
-              text: data.token,
-              sender: 'assistant',
-              timestamp,
-              task_id: data.task_id
-            }];
-          });
-          break;
-        }
-        case 'error':
-          console.error('WebSocket error:', data.message);
-          messageInProgress = false;
-          setIsStreaming(false);
-          break;
-        case 'generation_complete':
-          console.log('Generation completed for task:', data.task_id);
-          messageInProgress = false;
-          setIsStreaming(false);
-          fetchChatHistory();
-          break;
-        default:
-          console.log('Unknown message type:', data.type);
-      }
-    };
-
-    ws.onclose = () => {
-      console.log('WebSocket disconnected');
-      setConnected(false);
-      setCurrentChatId(null);
-      setIsStreaming(false);
-    };
-  }, [setMessages, setIsStreaming, fetchChatHistory]);
-
   // Load chat messages
   const loadChat = useCallback(async (chatId: number) => {
     try {
@@ -277,29 +270,18 @@ function App() {
       setMessages(formattedMessages);
       setIsHistoryOpen(false);
 
-      // Reconnect WebSocket with the new chat ID
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.close();
-      }
-      const newWs = new WebSocket('ws://localhost:8005/ws/1');
-      wsRef.current = newWs;
-
-      newWs.onopen = () => {
-        console.log('Reconnecting and joining chat:', chatId);
-        setConnected(true);
-        // Set current chat ID immediately to enable the input
-        setCurrentChatId(chatId);
-        newWs.send(JSON.stringify({
+      // Join the chat via WebSocket
+      if (connected) {
+        sendWebSocketMessage(JSON.stringify({
           action: 'join_chat',
           chat_id: chatId
         }));
-      };
-
-      setupWebSocketHandlers(newWs);
+        setCurrentChatId(chatId);
+      }
     } catch (error) {
       console.error('Error loading chat:', error);
     }
-  }, [setMessages, setupWebSocketHandlers]);
+  }, [setMessages, connected, sendWebSocketMessage]);
 
   // Check URL for chat ID on load
   useEffect(() => {
@@ -312,6 +294,19 @@ function App() {
       }
     }
   }, [loadChat]);
+
+  // Create new chat when connected if no chat ID in URL
+  useEffect(() => {
+    if (connected) {
+      const params = new URLSearchParams(window.location.search);
+      const urlChatId = params.get('chat');
+      if (!urlChatId) {
+        sendWebSocketMessage(JSON.stringify({
+          action: 'create_chat'
+        }));
+      }
+    }
+  }, [connected, sendWebSocketMessage]);
 
   // Update URL when chat changes
   useEffect(() => {
@@ -331,59 +326,33 @@ function App() {
         loadChat(chatId);
       } else {
         // No chat ID in history state, create new chat
-        if (wsRef.current?.readyState === WebSocket.OPEN) {
-          wsRef.current.send(JSON.stringify({ action: 'create_chat' }));
+        if (connected) {
+          sendWebSocketMessage(JSON.stringify({ action: 'create_chat' }));
         }
       }
     };
 
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, [loadChat]);
+  }, [loadChat, connected, sendWebSocketMessage]);
 
   const startNewChat = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
+    if (connected) {
       setMessages([]);
-      wsRef.current.send(JSON.stringify({ action: 'create_chat' }));
+      sendWebSocketMessage(JSON.stringify({ action: 'create_chat' }));
       setIsHistoryOpen(false);
     }
-  }, [setMessages]);
-
-  // Update the WebSocket connection setup
-  useEffect(() => {
-    const ws = new WebSocket('ws://localhost:8005/ws/1');
-
-    ws.onopen = () => {
-      console.log('Connected to WebSocket');
-      setConnected(true);
-      
-      // Only create a new chat if there's no chat ID in the URL
-      const params = new URLSearchParams(window.location.search);
-      const urlChatId = params.get('chat');
-      if (!urlChatId) {
-        ws.send(JSON.stringify({
-          action: 'create_chat'
-        }));
-      }
-    };
-
-    setupWebSocketHandlers(ws);
-    wsRef.current = ws;
-
-    return () => {
-      ws.close();
-    };
-  }, [setupWebSocketHandlers]);
+  }, [setMessages, connected, sendWebSocketMessage]);
 
   const sendMessage = () => {
-    if (inputMessage.trim() && wsRef.current?.readyState === WebSocket.OPEN && currentChatId) {
+    if (inputMessage.trim() && connected && currentChatId) {
       console.log('Sending message to chat:', currentChatId);
       const messageObj = {
         action: 'send_message',
         chat_id: currentChatId,
         content: inputMessage,
       };
-      wsRef.current.send(JSON.stringify(messageObj));
+      sendWebSocketMessage(JSON.stringify(messageObj));
       setInputMessage('');
     }
   };
