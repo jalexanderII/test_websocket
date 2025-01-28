@@ -14,7 +14,7 @@ from db.database import get_db
 from services.chat_service import ChatService
 
 
-# Define response model at module level
+# mock struct response
 class StrucResponse(BaseModel):
     answer: str
     reason: str
@@ -39,9 +39,7 @@ class MessageData(BaseModel):
 
 class ConnectionManager:
     def __init__(self):
-        # Initialize Redis Set with the connection manager
         self.active_users = RedisSet("active_users", connection_manager=redis_manager)
-        # Keep WebSocket connections in memory since they can't be serialized
         self._connections: Dict[int, Set[WebSocket]] = {}
 
     async def connect(self, websocket: WebSocket, user_id: int):
