@@ -6,21 +6,21 @@ from config.env import HOST, PORT
 from api.routes.http_endpoints import router as http_router
 from api.routes.chat_websocket import router as websocket_router
 
-# Create database tables
+
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Chat Application")
 
-# Configure CORS
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with specific origins
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Include routers
+
 app.include_router(http_router, prefix="/api", tags=["chat"])
 app.include_router(websocket_router, tags=["websocket"])
 

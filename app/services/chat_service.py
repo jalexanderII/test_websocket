@@ -15,7 +15,7 @@ from typing import (
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone
 from pydantic import BaseModel
-from redis_data_structures import LRUCache, Queue, PriorityQueue
+from redis_data_structures import LRUCache, Queue
 from adapters.ai_adapter import OpenAIAdapter
 from config.redis_config import redis_manager
 from db.models import ChatDB, MessageDB
@@ -34,14 +34,10 @@ class ChatService:
     def __init__(self, db: Session):
         self.db = db
         self.adapter = OpenAIAdapter()
-        # Initialize Redis data structures with connection manager
         self.chat_cache = LRUCache(
             "chat_history", capacity=1000, connection_manager=redis_manager
         )
         self.message_queue = Queue("chat_messages", connection_manager=redis_manager)
-        self.priority_messages = PriorityQueue(
-            "priority_messages", connection_manager=redis_manager
-        )
 
     def _is_chat_empty(self, chat_id: int) -> bool:
         """Check if a chat has any messages."""
@@ -105,17 +101,12 @@ class ChatService:
 
         for msg in messages:
             # The first AI message in a chat is the system message
-            if msg.is_ai and not history:
-                role: Literal["user", "assistant", "system"] = "system"
-            else:
-                role = "assistant" if msg.is_ai else "user"
+            role = "assistant" if msg.is_ai else "user"
             history.append({"role": role, "content": msg.content})
 
         return history
 
-    async def send_message(
-        self, chat_id: Optional[int], content: str, priority: int = 1
-    ) -> Message:
+    async def send_message(self, chat_id: Optional[int], content: str) -> Message:
         # Save user message
         user_message = MessageDB(
             chat_id=chat_id,
@@ -127,15 +118,14 @@ class ChatService:
         self.db.commit()
         self.db.refresh(user_message)
 
-        # Queue message for AI processing with priority
-        self.priority_messages.push(
+        # Queue message for AI processing
+        self.message_queue.push(
             {
                 "chat_id": chat_id,
                 "content": content,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "message_id": user_message.id,
-            },
-            priority,
+            }
         )
 
         # Invalidate chat cache since we added a new message

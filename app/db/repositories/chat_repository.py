@@ -92,7 +92,6 @@ class ChatRepository:
         if not db_message:
             raise ValueError(f"Message with id {message.id} not found")
 
-        # Update the message content
         setattr(db_message, "content", message.content)
         self.db.commit()
         self.db.refresh(db_message)
@@ -104,11 +103,3 @@ class ChatRepository:
             is_ai=db_message.is_ai,
             timestamp=db_message.timestamp,
         )
-
-    def create(self, chat):
-        # Mock implementation for now
-        return chat
-
-    def get_by_id(self, chat_id):
-        # Mock implementation for now
-        return None
