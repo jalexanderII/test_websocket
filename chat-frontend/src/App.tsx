@@ -138,7 +138,6 @@ function App() {
           break;
         }
         case 'structured_token': {
-          console.log('Structured token received:', data.data);
           if (!isStreaming) {
             setIsStreaming(true);
           }
@@ -165,7 +164,6 @@ function App() {
           break;
         }
         case 'token': {
-          console.log('Token received:', data.token);
           if (!isStreaming) {
             setIsStreaming(true);
           }
@@ -235,7 +233,7 @@ function App() {
     }
   }, [messages.length, scrollToBottom]);
 
-  // Fetch chat history
+  
   const fetchChatHistory = useCallback(async () => {
     try {
       const response = await fetch('http://localhost:8005/api/users/1/chats');
@@ -251,14 +249,13 @@ function App() {
     }
   }, [setChats]);
 
-  // Load chat messages
+  
   const loadChat = useCallback(async (chatId: number) => {
     try {
       const response = await fetch(`http://localhost:8005/api/chats/${chatId}`);
       if (!response.ok) throw new Error('Failed to fetch chat');
       const chat: APIChat = await response.json();
       
-      // Convert backend messages to frontend format
       const formattedMessages: Message[] = chat.messages.map(msg => ({
         id: msg.id,
         text: msg.content,
@@ -415,17 +412,14 @@ function App() {
         setMessages([]);
       }
 
-      // Clear selection
       clearSelection();
       
-      // Fetch updated chat history
       await fetchChatHistory();
     } catch (error) {
       console.error('Error deleting chats:', error);
     }
   };
 
-  // Add cleanup function
   const cleanupEmptyChats = useCallback(async () => {
     try {
       const response = await fetch('http://localhost:8005/api/users/1/chats/empty', {
