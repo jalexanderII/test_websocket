@@ -103,10 +103,13 @@ function App() {
   const [isStreaming, setIsStreaming] = useAtom(streamingAtom);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [selectMode, setSelectMode] = useState(false);
+  const [connectionHealth, setConnectionHealth] = useState<'healthy' | 'unhealthy'>('healthy');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const lastPongRef = useRef<number>(Date.now());
+  const wsRef = useRef<WebSocket | null>(null);
 
-  const { sendMessage: sendWebSocketMessage, readyState } = useWebSocket('ws://localhost:8005/ws/1', {
+  const { sendMessage: sendWebSocketMessage, readyState, getWebSocket } = useWebSocket('ws://localhost:8005/ws/1', {
     onMessage: (event) => {
       const data = JSON.parse(event.data);
       console.log('WebSocket message received:', data);
@@ -117,11 +120,6 @@ function App() {
           setCurrentChatId(data.chat_id);
           fetchChatHistory();
           break;
-        case 'chat_joined': {
-          console.log('Joined chat:', data.chat_id);
-          setCurrentChatId(data.chat_id);
-          break;
-        }
         case 'message': {
           console.log('Message received:', data.message);
           if (data.message.is_ai && !isStreaming) {
@@ -201,12 +199,20 @@ function App() {
           console.log('Unknown message type:', data.type);
       }
     },
-    onClose: () => {
-      console.log('WebSocket disconnected');
-      setCurrentChatId(null);
-      setIsStreaming(false);
+    onOpen: () => {
+      const ws = getWebSocket();
+      if (ws instanceof WebSocket) {
+        wsRef.current = ws;
+        lastPongRef.current = Date.now();
+        setConnectionHealth('healthy');
+      }
     },
-    shouldReconnect: () => true,
+    onClose: () => {
+      setConnectionHealth('unhealthy');
+    },
+    onError: () => {
+      setConnectionHealth('unhealthy');
+    }
   });
 
   const connected = readyState === ReadyState.OPEN;
@@ -448,6 +454,36 @@ function App() {
     }
   }, [connected, cleanupEmptyChats]);
 
+  // Setup ping/pong interval
+  useEffect(() => {
+    if (connected) {
+      const pingInterval = setInterval(() => {
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          // Send ping frame
+          wsRef.current.send(new Uint8Array([0x9]).buffer);
+          
+          // Check if we haven't received a pong in more than 30 seconds
+          if (Date.now() - lastPongRef.current > 30000) {
+            setConnectionHealth('unhealthy');
+          }
+        }
+      }, 15000);
+
+      // Handle pong responses
+      const handlePong = () => {
+        lastPongRef.current = Date.now();
+        setConnectionHealth('healthy');
+      };
+
+      wsRef.current?.addEventListener('pong', handlePong);
+
+      return () => {
+        clearInterval(pingInterval);
+        wsRef.current?.removeEventListener('pong', handlePong);
+      };
+    }
+  }, [connected]);
+
   return (
     <div className="min-h-screen bg-background p-4 md:p-8">
       <Card className="mx-auto max-w-4xl h-[90vh] flex flex-col">
@@ -544,8 +580,8 @@ function App() {
                   <span className="text-sm text-muted-foreground">•</span>
                 </>
               )}
-              <div className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`} />
-              {connected ? 'Connected' : 'Disconnected'}
+              <div className={`w-2 h-2 rounded-full ${connected && connectionHealth === 'healthy' ? 'bg-green-500' : 'bg-red-500'}`} />
+              {connected ? (connectionHealth === 'healthy' ? 'Connected' : 'Connection Issues') : 'Disconnected'}
               {currentChatId && <span className="text-sm text-muted-foreground">• Chat #{currentChatId}</span>}
             </div>
           </div>

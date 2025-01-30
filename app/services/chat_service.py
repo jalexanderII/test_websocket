@@ -1,26 +1,26 @@
 import json
+from datetime import datetime, timezone
 from typing import (
-    Optional,
+    Any,
     AsyncGenerator,
-    List,
-    TypedDict,
-    Literal,
-    Sequence,
-    Type,
-    TypeVar,
     Callable,
     Coroutine,
-    Any,
+    List,
+    Literal,
+    Optional,
+    Sequence,
+    Type,
+    TypedDict,
+    TypeVar,
 )
-from sqlalchemy.orm import Session
-from datetime import datetime, timezone
-from pydantic import BaseModel
-from redis_data_structures import LRUCache, Queue
+
 from adapters.ai_adapter import OpenAIAdapter
 from config.redis_config import redis_manager
 from db.models import ChatDB, MessageDB
+from pydantic import BaseModel
+from redis_data_structures import LRUCache, Queue
 from schemas.chat import Chat, Message
-
+from sqlalchemy.orm import Session
 
 T = TypeVar("T", bound=BaseModel)
 

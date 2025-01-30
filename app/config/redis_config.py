@@ -1,15 +1,16 @@
-from redis_data_structures import ConnectionManager
 from datetime import timedelta
+
 from config.env import (
-    REDIS_HOST,
-    REDIS_PORT,
-    REDIS_DB,
-    REDIS_MAX_CONNECTIONS,
-    REDIS_RETRY_ATTEMPTS,
     REDIS_CB_THRESHOLD,
     REDIS_CB_TIMEOUT_MINS,
+    REDIS_DB,
+    REDIS_HOST,
+    REDIS_MAX_CONNECTIONS,
+    REDIS_PORT,
+    REDIS_RETRY_ATTEMPTS,
     REDIS_SSL,
 )
+from redis_data_structures import ConnectionManager
 
 # Initialize a single Redis connection manager for the entire application
 redis_manager = ConnectionManager(

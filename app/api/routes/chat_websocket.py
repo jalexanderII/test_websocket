@@ -1,17 +1,16 @@
-from functools import partial
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
-from pydantic import BaseModel
-from sqlalchemy.orm import Session
-from typing import Callable, Coroutine, Any, Optional, Dict, Set
 import json
 import uuid
 from datetime import datetime, timezone
-from redis_data_structures import Set as RedisSet
-
+from functools import partial
+from typing import Any, Callable, Coroutine, Dict, Optional, Set
 
 from config.redis_config import redis_manager
 from db.database import get_db
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel
+from redis_data_structures import Set as RedisSet
 from services.chat_service import ChatService
+from sqlalchemy.orm import Session
 
 
 # mock struct response
@@ -39,8 +38,9 @@ class MessageData(BaseModel):
 
 class ConnectionManager:
     def __init__(self):
-        self.active_users = RedisSet("active_users", connection_manager=redis_manager)
+        self.active_users: RedisSet[int] = RedisSet("active_users", connection_manager=redis_manager)
         self._connections: Dict[int, Set[WebSocket]] = {}
+        self._last_heartbeat: Dict[WebSocket, float] = {}
 
     async def connect(self, websocket: WebSocket, user_id: int):
         await websocket.accept()
@@ -48,10 +48,13 @@ class ConnectionManager:
         if user_id not in self._connections:
             self._connections[user_id] = set()
         self._connections[user_id].add(websocket)
+        self._last_heartbeat[websocket] = datetime.now(timezone.utc).timestamp()
 
     def disconnect(self, websocket: WebSocket, user_id: int):
         if user_id in self._connections:
             self._connections[user_id].discard(websocket)
+            if websocket in self._last_heartbeat:
+                del self._last_heartbeat[websocket]
             if not self._connections[user_id]:
                 del self._connections[user_id]
                 self.active_users.remove(user_id)
@@ -60,6 +63,37 @@ class ConnectionManager:
         if user_id in self._connections:
             for connection in self._connections[user_id]:
                 await connection.send_text(message)
+
+    def update_heartbeat(self, websocket: WebSocket):
+        self._last_heartbeat[websocket] = datetime.now(timezone.utc).timestamp()
+
+    def is_connection_alive(self, websocket: WebSocket, timeout_seconds: int = 30) -> bool:
+        if websocket not in self._last_heartbeat:
+            return False
+        last_heartbeat = self._last_heartbeat[websocket]
+        current_time = datetime.now(timezone.utc).timestamp()
+        return (current_time - last_heartbeat) < timeout_seconds
+
+    def get_health_info(self) -> Dict[str, Any]:
+        """Get detailed health information about WebSocket connections."""
+        current_time = datetime.now(timezone.utc).timestamp()
+        active_connections = sum(len(connections) for connections in self._connections.values())
+        dead_connections = sum(1 for ws in self._last_heartbeat if (current_time - self._last_heartbeat[ws]) >= 30)
+
+        return {
+            "status": "healthy" if active_connections > 0 and dead_connections == 0 else "degraded",
+            "active_users_count": self.active_users.size(),
+            "total_connections": active_connections,
+            "dead_connections": dead_connections,
+            "connections_by_user": {user_id: len(connections) for user_id, connections in self._connections.items()},
+            "redis_health": redis_manager.health_check(),
+            "last_heartbeat_stats": {
+                "oldest_heartbeat": min(self._last_heartbeat.values()) if self._last_heartbeat else None,
+                "newest_heartbeat": max(self._last_heartbeat.values()) if self._last_heartbeat else None,
+                "total_tracked_heartbeats": len(self._last_heartbeat),
+            },
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
 
 
 class WebSocketHandler:
@@ -235,21 +269,43 @@ async def websocket_endpoint(
 
     try:
         while True:
-            data = await websocket.receive_text()
-            try:
-                message_data = MessageData.from_ws_message(data)
+            message = await websocket.receive()
+            message_type = message["type"]
 
-                if message_data.action == "send_message":
-                    await handler.handle_send_message(message_data)
-                elif message_data.action == "create_chat":
-                    await handler.handle_create_chat()
-                elif message_data.action == "join_chat":
-                    await handler.handle_join_chat(message_data)
+            # Handle different WebSocket message types
+            if message_type == "websocket.disconnect":
+                break
+            elif message_type == "websocket.ping":
+                await websocket.send({"type": "websocket.pong"})
+                manager.update_heartbeat(websocket)
+            elif message_type == "websocket.receive":
+                data = message.get("text")
+                if not data:
+                    continue
 
-            except json.JSONDecodeError:
-                await handler._send_error("Invalid JSON format")
-            except Exception as e:
-                await handler._send_error(str(e))
+                try:
+                    message_data = MessageData.from_ws_message(data)
+
+                    if message_data.action == "send_message":
+                        await handler.handle_send_message(message_data)
+                    elif message_data.action == "create_chat":
+                        await handler.handle_create_chat()
+                    elif message_data.action == "join_chat":
+                        await handler.handle_join_chat(message_data)
+
+                except json.JSONDecodeError:
+                    await handler._send_error("Invalid JSON format")
+                except Exception as e:
+                    await handler._send_error(str(e))
 
     except WebSocketDisconnect:
+        pass
+    finally:
         manager.disconnect(websocket, user_id)
+
+
+@router.get("/ws/health")
+async def websocket_health():
+    """Health check endpoint for WebSocket service with detailed metrics"""
+    health_info = manager.get_health_info()
+    return health_info

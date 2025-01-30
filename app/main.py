@@ -1,11 +1,9 @@
+from api.routes.chat_websocket import router as websocket_router
+from api.routes.http_endpoints import router as http_router
+from config.env import HOST, PORT
+from db.database import Base, engine
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
-from db.database import Base, engine
-from config.env import HOST, PORT
-from api.routes.http_endpoints import router as http_router
-from api.routes.chat_websocket import router as websocket_router
-
 
 Base.metadata.create_all(bind=engine)
 
