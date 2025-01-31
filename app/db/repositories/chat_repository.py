@@ -1,7 +1,8 @@
-from typing import List, Optional
+from typing import List, Optional, cast
 
 from db.models import ChatDB, MessageDB
 from schemas.chat import Chat, Message
+from sqlalchemy import Column
 from sqlalchemy.orm import Session
 
 
@@ -92,14 +93,14 @@ class ChatRepository:
         if not db_message:
             raise ValueError(f"Message with id {message.id} not found")
 
-        db_message.content = message.content
+        db_message.content = cast(Column[str], message.content)
         self.db.commit()
         self.db.refresh(db_message)
 
         return Message(
             id=db_message.id,
             chat_id=db_message.user_id,
-            content=db_message.content,
+            content=str(db_message.content),
             is_ai=db_message.is_ai,
             timestamp=db_message.timestamp,
         )
