@@ -5,11 +5,10 @@ A real-time chat application built with FastAPI, WebSocket, React, and OpenAI in
 ## Features
 
 - Real-time chat with WebSocket support
-- AI-powered responses using OpenAI's GPT models
+- AI response, normal, stream, and structured stream
 - React frontend with TypeScript and shadcn/ui components
 - Chat history persistence
 - Redis for managing AI response streams
-- Scalable architecture following clean architecture principles
 
 ## Prerequisites
 
@@ -41,7 +40,7 @@ A real-time chat application built with FastAPI, WebSocket, React, and OpenAI in
 
     ```bash
     uv venv
-    source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+    source .venv/bin/activate
     ```
 
 4. Install dependencies:
@@ -55,7 +54,7 @@ A real-time chat application built with FastAPI, WebSocket, React, and OpenAI in
     ```env
     DATABASE_URL=sqlite:///./chat.db
     OPENAI_API_KEY=your_openai_api_key_here
-    MODEL_NAME=gpt-3.5-turbo
+    MODEL_NAME=gpt-4o-mini
     HOST=0.0.0.0
     PORT=8005
     ENVIRONMENT=development
