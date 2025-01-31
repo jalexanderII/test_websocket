@@ -136,6 +136,20 @@ export default function ChatPage() {
           });
           break;
         }
+        case 'task_completed': {
+          console.log('Task completed:', data.task_id);
+          // If this was an AI response task, stop streaming
+          if (data.result && typeof data.result.content === 'string') {
+            setIsStreaming(false);
+            fetchChatHistory();
+          }
+          break;
+        }
+        case 'task_failed': {
+          console.error('Task failed:', data.error);
+          setIsStreaming(false);
+          break;
+        }
         case 'error':
           console.error('WebSocket error:', data.message);
           setIsStreaming(false);

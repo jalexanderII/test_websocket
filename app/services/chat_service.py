@@ -45,7 +45,7 @@ class ChatService:
         self.chat_cache = LRUCache("chat_history", capacity=1000, connection_manager=redis_manager)
         self.message_queue = Queue("chat_messages", connection_manager=redis_manager)
 
-    def create_chat(self, user_id: int) -> Chat:
+    async def create_chat(self, user_id: int) -> Chat:
         # First check if user exists, if not create one
         user = self.db.query(UserDB).filter(UserDB.id == user_id).first()
         if not user:
@@ -69,7 +69,7 @@ class ChatService:
         logger.info("Chat created in database with id: %s", db_chat.id)
         return Chat.model_validate(db_chat)
 
-    def get_chat(self, chat_id: int) -> Optional[Chat]:
+    async def get_chat(self, chat_id: int) -> Optional[Chat]:
         # Try cache first
         cached_chat = self.chat_cache.get(str(chat_id))
         if cached_chat:
@@ -85,17 +85,17 @@ class ChatService:
         self.chat_cache.put(str(chat_id), chat.model_dump())
         return chat
 
-    def get_user_chats(self, user_id: int) -> List[Chat]:
+    async def get_user_chats(self, user_id: int) -> List[Chat]:
         db_chats = self.db.query(ChatDB).filter(ChatDB.user_id == user_id).all()
         return [Chat.model_validate(chat) for chat in db_chats]
 
-    def _get_chat_history(self, chat_id: int) -> Sequence[ChatMessage]:
+    async def _get_chat_history(self, chat_id: int) -> Sequence[ChatMessage]:
         messages = self.db.query(MessageDB).filter(MessageDB.chat_id == chat_id).all()
         return [{"role": "assistant" if msg.is_ai else "user", "content": msg.content} for msg in messages]
 
-    def send_message(self, message: MessageCreate) -> Message:
+    async def send_message(self, message: MessageCreate) -> Message:
         # Verify chat exists
-        chat = self.get_chat(message.chat_id)
+        chat = await self.get_chat(message.chat_id)
         if not chat:
             raise ValueError("Chat not found")
 
@@ -135,13 +135,13 @@ class ChatService:
     ) -> AsyncGenerator[str, None]:
         logger.info("Starting AI response stream for chat %s", chat_id)
         # Get chat
-        chat = self.get_chat(chat_id)
+        chat = await self.get_chat(chat_id)
         if not chat:
             logger.error("Chat %s not found", chat_id)
             raise ValueError("Chat not found")
 
         # Get history
-        history = self._get_chat_history(chat_id)
+        history = await self._get_chat_history(chat_id)
         logger.debug("Got chat history with %d messages", len(history))
 
         # Create empty AI message in DB, this will be updated when the response is streamed
@@ -196,12 +196,12 @@ class ChatService:
         user_message: str,
     ) -> AsyncGenerator[BaseModel, None]:
         # Get chat
-        chat = self.get_chat(chat_id)
+        chat = await self.get_chat(chat_id)
         if not chat:
             raise ValueError("Chat not found")
 
         # Get history
-        history = self._get_chat_history(chat_id)
+        history = await self._get_chat_history(chat_id)
 
         # Create AI message in DB
         db_message = MessageDB(
