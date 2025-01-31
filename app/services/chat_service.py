@@ -132,40 +132,54 @@ class ChatService:
         chat_id: int,
         user_message: str,
     ) -> AsyncGenerator[str, None]:
+        logger.info("Starting AI response stream for chat %s", chat_id)
         # Get chat
         chat = self.get_chat(chat_id)
         if not chat:
+            logger.error("Chat %s not found", chat_id)
             raise ValueError("Chat not found")
 
         # Get history
         history = self._get_chat_history(chat_id)
+        logger.debug("Got chat history with %d messages", len(history))
 
-        # Create AI message
-        ai_message = await self.send_message(
-            MessageCreate(
-                chat_id=chat_id,
-                content="",
-                is_ai=True,
-            ),
-            chat.user_id,
+        # Create AI message in DB
+        db_message = MessageDB(
+            chat_id=chat_id,
+            content="",
+            is_ai=True,
+            timestamp=datetime.now(timezone.utc),
         )
+        self.db.add(db_message)
+        self.db.commit()
+        self.db.refresh(db_message)
+        logger.info("Created initial AI message with ID %s", db_message.id)
 
         # Stream response
         complete_response = ""
         try:
+            logger.info("Starting to stream AI response")
             async for token in self.adapter.stream_response(user_message, history=history):
+                logger.debug("Received token: %s", token)
+                if not isinstance(token, str):
+                    logger.error("Received non-string token: %s, value: %s", type(token), token)
+                    continue
                 complete_response += token
                 yield token
 
+            logger.info("Stream completed, updating message in DB")
             # Update message with complete response
-            ai_message.content = complete_response
-            self.db.merge(ai_message)
+            db_message.content = complete_response
+            self.db.merge(db_message)
             self.db.commit()
+            logger.info("Updated message %s with complete response (length: %d)", db_message.id, len(complete_response))
 
         except Exception:
+            logger.exception("Error during streaming")
             if complete_response:
-                ai_message.content = complete_response
-                self.db.merge(ai_message)
+                logger.info("Saving partial response before re-raising")
+                db_message.content = complete_response
+                self.db.merge(db_message)
                 self.db.commit()
             raise
 
@@ -182,15 +196,16 @@ class ChatService:
         # Get history
         history = self._get_chat_history(chat_id)
 
-        # Create AI message
-        ai_message = await self.send_message(
-            MessageCreate(
-                chat_id=chat_id,
-                content="",
-                is_ai=True,
-            ),
-            chat.user_id,
+        # Create AI message in DB
+        db_message = MessageDB(
+            chat_id=chat_id,
+            content="",
+            is_ai=True,
+            timestamp=datetime.now(timezone.utc),
         )
+        self.db.add(db_message)
+        self.db.commit()
+        self.db.refresh(db_message)
 
         try:
             async for response in self.adapter.stream_structured_response(
@@ -200,8 +215,8 @@ class ChatService:
             ):
                 yield response
                 # Update message with latest response
-                ai_message.content = response.model_dump_json()
-                self.db.merge(ai_message)
+                db_message.content = response.model_dump_json()
+                self.db.merge(db_message)
                 self.db.commit()
 
         except Exception:

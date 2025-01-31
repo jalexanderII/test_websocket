@@ -1,17 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Separator } from "@/components/ui/separator"
-import { Send, History, Trash2, X, Plus, Loader2 } from "lucide-react"
+import { CardTitle } from "@/components/ui/card"
+import { Send, Trash2, X, Plus, Loader2 } from "lucide-react"
 import { atom, useAtom } from 'jotai'
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from "@/components/ui/sheet"
 import { Checkbox } from "@/components/ui/checkbox"
 import useWebSocket, { ReadyState } from 'react-use-websocket'
 
@@ -102,7 +94,6 @@ function App() {
   const [inputMessage, setInputMessage] = useState('');
   const [currentChatId, setCurrentChatId] = useState<number | null>(null);
   const [isStreaming, setIsStreaming] = useAtom(streamingAtom);
-  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [selectMode, setSelectMode] = useState(false);
   const [connectionHealth, setConnectionHealth] = useState<'healthy' | 'unhealthy'>('healthy');
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -112,6 +103,10 @@ function App() {
 
   const { sendMessage: sendWebSocketMessage, readyState, getWebSocket } = useWebSocket('ws://localhost:8005/api/ws/1', {
     onMessage: (event) => {
+      // Any successful message indicates a healthy connection
+      setConnectionHealth('healthy');
+      lastPongRef.current = Date.now();
+
       const data = JSON.parse(event.data);
       console.log('WebSocket message received:', data);
 
@@ -137,36 +132,14 @@ function App() {
           setMessages(prev => [...prev, newMessage]);
           break;
         }
-        case 'structured_token': {
-          if (!isStreaming) {
-            setIsStreaming(true);
-          }
-          setMessages(prev => {
-            const lastMessage = prev[prev.length - 1];
-            if (lastMessage && lastMessage.sender === 'assistant' && lastMessage.task_id === data.task_id) {
-              const newMessages = [...prev];
-              newMessages[newMessages.length - 1] = {
-                ...lastMessage,
-                structured: data.data
-              };
-              return newMessages;
-            }
-            const timestamp = new Date().toISOString();
-            return [...prev, {
-              id: Date.now(),
-              chat_id: data.chat_id,
-              text: '',
-              sender: 'assistant',
-              timestamp,
-              task_id: data.task_id,
-              structured: data.data
-            }];
-          });
-          break;
-        }
         case 'token': {
+          console.log('Token received:', data.content);
           if (!isStreaming) {
             setIsStreaming(true);
+          }
+          if (typeof data.content !== 'string') {
+            console.error('Received invalid token type:', typeof data.content, data.content);
+            break;
           }
           setMessages(prev => {
             const lastMessage = prev[prev.length - 1];
@@ -174,7 +147,7 @@ function App() {
               const newMessages = [...prev];
               newMessages[newMessages.length - 1] = {
                 ...lastMessage,
-                text: lastMessage.text + data.token
+                text: lastMessage.text + data.content
               };
               return newMessages;
             }
@@ -182,7 +155,7 @@ function App() {
             return [...prev, {
               id: Date.now(),
               chat_id: data.chat_id,
-              text: data.token,
+              text: data.content,
               sender: 'assistant',
               timestamp,
               task_id: data.task_id
@@ -200,10 +173,11 @@ function App() {
           fetchChatHistory();
           break;
         default:
-          console.log('Unknown message type:', data.type);
+          console.warn('Unknown message type:', data.type);
       }
     },
     onOpen: () => {
+      console.log('WebSocket connected');
       const ws = getWebSocket();
       if (ws instanceof WebSocket) {
         wsRef.current = ws;
@@ -212,10 +186,15 @@ function App() {
       }
     },
     onClose: () => {
+      console.log('WebSocket disconnected');
       setConnectionHealth('unhealthy');
     },
-    onError: () => {
-      setConnectionHealth('unhealthy');
+    onError: (error) => {
+      console.error('WebSocket error:', error);
+      // Only set unhealthy if we're not receiving messages
+      if (Date.now() - lastPongRef.current > 30000) {
+        setConnectionHealth('unhealthy');
+      }
     }
   });
 
@@ -276,7 +255,6 @@ function App() {
       }));
       
       setMessages(formattedMessages);
-      setIsHistoryOpen(false);
 
       // Join the chat via WebSocket
       if (connected) {
@@ -355,7 +333,6 @@ function App() {
         action: 'create_chat',
         user_id: 1  // Include the user_id
       }));
-      setIsHistoryOpen(false);
     }
   }, [setMessages, connected, sendWebSocketMessage]);
 
@@ -466,7 +443,7 @@ function App() {
     }
   }, [connected, cleanupEmptyChats]);
 
-  // Setup ping/pong interval
+  // Modify the ping/pong interval
   useEffect(() => {
     if (connected) {
       const pingInterval = setInterval(() => {
@@ -474,9 +451,14 @@ function App() {
           // Send ping frame
           wsRef.current.send(new Uint8Array([0x9]).buffer);
           
-          // Check if we haven't received a pong in more than 30 seconds
-          if (Date.now() - lastPongRef.current > 30000) {
+          // Only set unhealthy if we haven't received any messages in 30 seconds
+          const timeSinceLastPong = Date.now() - lastPongRef.current;
+          if (timeSinceLastPong > 30000) {
+            console.warn(`No messages received in ${Math.round(timeSinceLastPong / 1000)}s, marking connection as unhealthy`);
             setConnectionHealth('unhealthy');
+          } else if (connectionHealth === 'unhealthy' && timeSinceLastPong < 30000) {
+            // Reset to healthy if we've received messages recently
+            setConnectionHealth('healthy');
           }
         }
       }, 15000);
@@ -494,147 +476,149 @@ function App() {
         wsRef.current?.removeEventListener('pong', handlePong);
       };
     }
-  }, [connected]);
+  }, [connected, connectionHealth]);
 
   return (
-    <div className="min-h-screen bg-background p-4 md:p-8">
-      <Card className="mx-auto max-w-4xl h-[90vh] flex flex-col">
-        <CardHeader className="space-y-1">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <CardTitle className="text-2xl">Chat Interface</CardTitle>
+    <div className="min-h-screen bg-background flex">
+      {/* Sidebar */}
+      <div className="w-80 border-r bg-card flex flex-col h-screen">
+        <div className="p-4 border-b">
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="font-semibold text-lg">Chats</h2>
+            {!selectMode && (
               <Button variant="outline" size="icon" onClick={startNewChat}>
                 <Plus className="h-4 w-4" />
               </Button>
-              <Sheet open={isHistoryOpen} onOpenChange={setIsHistoryOpen}>
-                <SheetTrigger asChild>
-                  <Button variant="outline" size="icon">
-                    <History className="h-4 w-4" />
-                  </Button>
-                </SheetTrigger>
-                <SheetContent>
-                  <SheetHeader className="flex justify-between items-center">
-                    <SheetTitle>Chat History</SheetTitle>
-                    <div className="flex items-center gap-2">
-                      {selectMode ? (
-                        <>
-                          <Button variant="outline" size="sm" onClick={selectAllChats}>
-                            Select All
-                          </Button>
-                          <Button variant="outline" size="sm" onClick={clearSelection}>
-                            <X className="h-4 w-4" />
-                          </Button>
-                          <Button 
-                            variant="destructive" 
-                            size="sm"
-                            onClick={deleteSelectedChats}
-                            disabled={selectedChats.size === 0}
-                          >
-                            Delete ({selectedChats.size})
-                          </Button>
-                        </>
-                      ) : (
-                        <Button 
-                          variant="outline" 
-                          size="sm" 
-                          onClick={() => setSelectMode(true)}
-                        >
-                          Select
-                        </Button>
-                      )}
-                    </div>
-                  </SheetHeader>
-                  <div className="mt-4 space-y-2 pr-4 h-[calc(100vh-8rem)] overflow-y-auto">
-                    {chats.map((chat) => (
-                      <div key={chat.id} className="flex items-center gap-2">
-                        {selectMode && (
-                          <Checkbox
-                            checked={selectedChats.has(chat.id)}
-                            onCheckedChange={() => toggleChatSelection(chat.id)}
-                          />
-                        )}
-                        <Button
-                          variant={chat.id === currentChatId ? "default" : "outline"}
-                          className="w-full justify-start"
-                          onClick={() => !selectMode && loadChat(chat.id)}
-                        >
-                          Chat #{chat.id}
-                          <span className="ml-2 text-xs text-muted-foreground">
-                            {new Date(chat.created_at).toLocaleDateString()}
-                          </span>
-                        </Button>
-                        {!selectMode && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              toggleChatSelection(chat.id);
-                              setSelectMode(true);
-                            }}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </SheetContent>
-              </Sheet>
+            )}
+          </div>
+          {selectMode && (
+            <div className="flex items-center gap-2 mt-2">
+              <Button variant="outline" size="sm" className="flex-1" onClick={selectAllChats}>
+                Select All
+              </Button>
+              <Button variant="outline" size="sm" onClick={clearSelection}>
+                <X className="h-4 w-4" />
+              </Button>
+              <Button 
+                variant="destructive" 
+                size="sm"
+                onClick={deleteSelectedChats}
+                disabled={selectedChats.size === 0}
+              >
+                Delete ({selectedChats.size})
+              </Button>
             </div>
+          )}
+          {!selectMode && (
+            <Button 
+              variant="outline" 
+              size="sm"
+              className="w-full mt-2"
+              onClick={() => setSelectMode(true)}
+            >
+              Select Chats
+            </Button>
+          )}
+        </div>
+        <div className="flex-1 overflow-y-auto p-4 space-y-2">
+          {chats.map((chat) => (
+            <div key={chat.id} className="flex items-center gap-2">
+              {selectMode && (
+                <Checkbox
+                  checked={selectedChats.has(chat.id)}
+                  onCheckedChange={() => toggleChatSelection(chat.id)}
+                />
+              )}
+              <Button
+                variant={chat.id === currentChatId ? "default" : "outline"}
+                className="w-full justify-start"
+                onClick={() => !selectMode && loadChat(chat.id)}
+              >
+                Chat #{chat.id}
+                <span className="ml-2 text-xs text-muted-foreground">
+                  {new Date(chat.created_at).toLocaleDateString()}
+                </span>
+              </Button>
+              {!selectMode && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleChatSelection(chat.id);
+                    setSelectMode(true);
+                  }}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Main Chat Area */}
+      <div className="flex-1 flex flex-col h-screen">
+        <div className="border-b p-4">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-2xl">Chat Interface</CardTitle>
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               {isStreaming && (
                 <>
-                  <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                  <div className="flex items-center gap-1">
                     <Loader2 className="h-3 w-3 animate-spin mr-1" />
                     Streaming
                   </div>
-                  <span className="text-sm text-muted-foreground">•</span>
+                  <span>•</span>
                 </>
               )}
-              <div className={`w-2 h-2 rounded-full ${connected && connectionHealth === 'healthy' ? 'bg-green-500' : 'bg-red-500'}`} />
-              {connected ? (connectionHealth === 'healthy' ? 'Connected' : 'Connection Issues') : 'Disconnected'}
-              {currentChatId && <span className="text-sm text-muted-foreground">• Chat #{currentChatId}</span>}
+              <div className={`w-2 h-2 rounded-full ${
+                !connected ? 'bg-red-500' : 
+                connectionHealth === 'healthy' ? 'bg-green-500' : 
+                'bg-yellow-400'
+              }`} />
+              {!connected ? 'Disconnected' : 
+               connectionHealth === 'healthy' ? 'Connected' : 
+               'Inactive'
+              }
+              {currentChatId && <span>• Chat #{currentChatId}</span>}
             </div>
           </div>
-          <Separator />
-        </CardHeader>
-        
-        <CardContent className="flex-1 flex flex-col gap-4 h-full overflow-hidden relative">
+        </div>
+
+        <div className="flex-1 flex flex-col p-4 overflow-hidden">
           <div 
             ref={scrollContainerRef}
-            className="flex-1 overflow-y-auto pr-4"
+            className="flex-1 overflow-y-auto space-y-4"
           >
-            <div className="space-y-4 pb-4">
-              {messages.map((message, index) => (
+            {messages.map((message, index) => (
+              <div
+                key={`${message.id || index}-${message.timestamp || Date.now()}`}
+                className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}
+              >
                 <div
-                  key={`${message.id || index}-${message.timestamp || Date.now()}`}
-                  className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}
+                  className={`
+                    max-w-[80%] rounded-lg px-4 py-2 break-words relative
+                    ${message.sender === 'user' 
+                      ? 'bg-primary text-primary-foreground' 
+                      : 'bg-muted'
+                    }
+                  `}
                 >
-                  <div
-                    className={`
-                      max-w-[80%] rounded-lg px-4 py-2 break-words relative
-                      ${message.sender === 'user' 
-                        ? 'bg-primary text-primary-foreground' 
-                        : 'bg-muted'
-                      }
-                    `}
-                  >
-                    {message.structured ? (
-                      <div className="space-y-2">
-                        {renderStructuredData(message.structured)}
-                      </div>
-                    ) : (
-                      message.text
-                    )}
-                  </div>
+                  {message.structured ? (
+                    <div className="space-y-2">
+                      {renderStructuredData(message.structured)}
+                    </div>
+                  ) : (
+                    message.text
+                  )}
                 </div>
-              ))}
-              <div ref={messagesEndRef} />
-            </div>
+              </div>
+            ))}
+            <div ref={messagesEndRef} />
           </div>
 
-          <div className="flex gap-2">
+          <div className="mt-4 flex gap-2">
             <Textarea
               value={inputMessage}
               onChange={(e) => setInputMessage(e.target.value)}
@@ -653,8 +637,8 @@ function App() {
               Send
             </Button>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
   );
 }
