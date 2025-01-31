@@ -47,7 +47,12 @@ class ConnectionManager:
         existing_meta = self.connection_metadata.get(meta_key)
 
         # Get client info safely
-        client_info = {"ip": websocket.client.host if websocket.client else "unknown"}
+        try:
+            client_ip = websocket.client.host if websocket.client else "unknown"
+        except Exception:
+            client_ip = "unknown"
+
+        client_info = {"ip": client_ip}
 
         if existing_meta:
             connection_meta = WebSocketConnection.model_validate(existing_meta)
@@ -59,7 +64,8 @@ class ConnectionManager:
                 user_id=user_id, last_heartbeat=datetime.now(timezone.utc), client_info=client_info, connection_count=1
             )
 
-        self.connection_metadata[meta_key] = connection_meta.model_dump()
+        # Store metadata in Redis
+        self.connection_metadata[meta_key] = connection_meta.model_dump(mode="json")
 
         # Store WebSocket connection in memory
         if user_id not in self._connections:

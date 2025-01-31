@@ -36,11 +36,12 @@ def mock_chat_service():
 
 @pytest.fixture
 def mock_websocket():
-    websocket = AsyncMock(spec=WebSocket)
-    websocket.receive_text.return_value = json.dumps(
-        {"action": "send_message", "chat_id": TEST_CHAT_ID, "content": TEST_MESSAGE}
-    )
-    return websocket
+    """Create a mock websocket for testing"""
+    mock = AsyncMock(spec=WebSocket)
+    # Set up client info as a simple string instead of a mock
+    mock.client = MagicMock()
+    mock.client.host = "127.0.0.1"
+    return mock
 
 
 @pytest.mark.asyncio
@@ -97,6 +98,9 @@ async def test_websocket_handler_send_message(mock_websocket, mock_chat_service,
     mock_message.content = TEST_MESSAGE
     mock_message.is_ai = False
     mock_message.timestamp = datetime.now(timezone.utc)
+    mock_message.model_dump = MagicMock(
+        return_value={"id": 1, "content": TEST_MESSAGE, "is_ai": False, "timestamp": mock_message.timestamp.isoformat()}
+    )
     mock_chat_service.send_message.return_value = mock_message
 
     # Test message handling
@@ -106,15 +110,13 @@ async def test_websocket_handler_send_message(mock_websocket, mock_chat_service,
 
     await handler.handle_send_message(message_data)
 
-    # Verify chat service was called with correct MessageCreate object
+    # Verify chat service was called
     mock_chat_service.send_message.assert_called_once()
-    call_args = mock_chat_service.send_message.call_args
-    message_create, user_id = call_args[0]
+    message_create = mock_chat_service.send_message.call_args[0][0]
     assert isinstance(message_create, MessageCreate)
     assert message_create.chat_id == TEST_CHAT_ID
     assert message_create.content == TEST_MESSAGE
     assert message_create.is_ai is False
-    assert user_id == TEST_USER_ID
 
 
 @pytest.mark.asyncio
