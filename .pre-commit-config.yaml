@@ -1,0 +1,44 @@
+exclude: '.git|.tox|.tf|.isort.cfg|.flake8|.lock|.ts|.tsx|.vscode'
+files: '^app/.*'
+
+default_stages: [pre-commit, pre-push]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-merge-conflict
+        name: Check that merge conflicts are not being committed
+      - id: debug-statements
+        name: Detect accidentally committed debug statements
+      - id: detect-private-key
+        name: Detect if private key is added to the repository
+      - id: mixed-line-ending
+        name: Detect if mixed line ending is used (\r vs. \r\n)
+      - id: trailing-whitespace
+        name: Remove trailing whitespace at end of line
+      - id: check-toml
+        name: Check TOML files
+      - id: check-yaml
+        name: Check YAML files
+        args:
+          - --unsafe
+      - id: pretty-format-json
+        name: Format JSON files
+        args:
+          - --autofix
+          - --no-sort-keys
+          - --indent
+          - "2"
+        pass_filenames: true
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.3
+    hooks:
+    # Run the linter.
+    - id: ruff
+      types_or: [ python, pyi ]
+      args: [ --fix ]
+    # Run the formatter.
+    - id: ruff-format
+      types_or: [ python, pyi ]
