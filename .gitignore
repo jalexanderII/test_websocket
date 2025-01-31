@@ -8,9 +8,12 @@ wheels/
 *.db
 .DS_Store
 
+.vscode
+
 # Virtual environments
 .venv
 .env
 
 # Cursor 
 instructions.md
+.cursorrules

@@ -6,7 +6,7 @@ A real-time chat application built with FastAPI, WebSocket, React, and OpenAI in
 
 - Real-time chat with WebSocket support
 - AI-powered responses using OpenAI's GPT models
-- Modern React frontend with TypeScript
+- React frontend with TypeScript and shadcn/ui components
 - Chat history persistence
 - Redis for managing AI response streams
 - Scalable architecture following clean architecture principles
@@ -17,6 +17,8 @@ A real-time chat application built with FastAPI, WebSocket, React, and OpenAI in
 - Node.js 18 or higher
 - Redis server
 - OpenAI API key
+- Bun (for frontend package management)
+- uv (for Python package management)
 
 ## Setup
 
@@ -29,39 +31,53 @@ A real-time chat application built with FastAPI, WebSocket, React, and OpenAI in
     cd chat-app
     ```
 
-2. Create and activate a virtual environment:
+2. Install uv if not already installed:
+
+    ```bash
+    pip install uv
+    ```
+
+3. Create and activate a virtual environment:
 
     ```bash
     uv venv
     source .venv/bin/activate  # On Windows: .venv\Scripts\activate
     ```
 
-3. Install dependencies:
+4. Install dependencies:
 
     ```bash
     uv sync
     ```
 
-4. Create a `.env` file in the root directory with the following content:
+5. Create a `.env` file in the root directory with the following content:
 
     ```env
     DATABASE_URL=sqlite:///./chat.db
     OPENAI_API_KEY=your_openai_api_key_here
-    MODEL_NAME=gpt-4o-mini
+    MODEL_NAME=gpt-3.5-turbo
     HOST=0.0.0.0
-    PORT=8000
+    PORT=8005
     ENVIRONMENT=development
+    
+    # Redis Configuration
     REDIS_HOST=localhost
     REDIS_PORT=6379
+    REDIS_DB=0
+    REDIS_MAX_CONNECTIONS=20
+    REDIS_RETRY_ATTEMPTS=5
+    REDIS_CB_THRESHOLD=10
+    REDIS_CB_TIMEOUT_MINS=5
+    REDIS_SSL=false
     ```
 
-5. Start Redis server (make sure Redis is installed):
+6. Start Redis server (make sure Redis is installed):
 
     ```bash
     redis-server
     ```
 
-6. Run the backend application:
+7. Run the backend application:
 
     ```bash
     python -m app.main
@@ -110,10 +126,14 @@ Send messages in the following JSON format:
 {
     "action": "send_message",
     "chat_id": "123",
-    "content": "Your message here",
-    "response_model": false
+    "content": "Your message here"
 }
 ```
+
+Other available actions:
+
+- `create_chat`: Create a new chat session
+- `join_chat`: Join an existing chat session
 
 ### Response Format
 
@@ -126,9 +146,11 @@ User/AI Message:
     "type": "message",
     "message": {
         "id": "1",
+        "chat_id": "123",
         "content": "Message content",
         "is_ai": false,
-        "timestamp": "2024-01-27T00:00:00Z"
+        "timestamp": "2024-01-27T00:00:00Z",
+        "task_id": "abc-123"  // Only present for AI messages
     }
 }
 ```
@@ -139,7 +161,7 @@ AI Stream Token:
 {
     "type": "token",
     "token": "Next token from AI",
-    "task_id": "123"
+    "task_id": "abc-123"
 }
 ```
 
@@ -148,7 +170,7 @@ Generation Complete:
 ```json
 {
     "type": "generation_complete",
-    "task_id": "123"
+    "task_id": "abc-123"
 }
 ```
 
@@ -171,9 +193,41 @@ Error:
 
 ## Architecture
 
-The application follows a clean architecture pattern with the following layers:
+The application follows a clean, layered architecture pattern designed for scalability and maintainability:
 
-- Presentation Layer (FastAPI endpoints, React frontend)
-- Application Layer (Services and Task Management)
-- Domain Layer (Core Business Logic)
-- Infrastructure Layer (Database, Redis, External Services)
+```ascii
+┌──────────────────────────────────────────────────┐
+│                Presentation Layer                │
+│  ┌────────────────┐         ┌─────────────────┐  │
+│  │  FastAPI       │         │     React UI    │  │
+│  │  - WebSocket   │         │   (TypeScript)  │  │
+│  │  - REST API    │         │                 │  │
+│  └────────────────┘         └─────────────────┘  │
+├──────────────────────────────────────────────────┤
+│               Application Layer                  │
+│  ┌────────────────┐    ┌───────────────────┐     │
+│  │    Services    │    │ Task Processors   │     │
+│  │  - Chat Logic  │    │ - Background Jobs │     │
+│  │  - User Mgmt   │    │ - AI Processing   │     │
+│  └────────────────┘    └───────────────────┘     │
+├──────────────────────────────────────────────────┤
+│                 Domain Layer                     │
+│  ┌────────────────┐    ┌───────────────────┐     │
+│  │Domain Models   │    │  Business Rules   │     │
+│  │(Pydantic)      │    │                   │     │
+│  └────────────────┘    └───────────────────┘     │
+├──────────────────────────────────────────────────┤
+│             Infrastructure Layer                 │
+│  ┌──────────┐  ┌────────┐  ┌────────────────┐    │
+│  │ Database │  │ Redis  │  │  OpenAI API    │    │
+│  └──────────┘  └────────┘  └────────────────┘    │
+└──────────────────────────────────────────────────┘
+```
+
+### Key Components
+
+- FastAPI WebSocket/REST endpoints
+- React frontend with shadcn/ui
+- Background task processing
+- WebSocket connection management
+- Redis data structures
