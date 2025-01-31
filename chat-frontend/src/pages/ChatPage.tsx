@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { CardTitle } from "@/components/ui/card"
-import { Send, Trash2, X, Plus, Loader2 } from "lucide-react"
+import { Send, Trash2, X, Plus, Loader2, Home } from "lucide-react"
 import { atom, useAtom } from 'jotai'
 import { Checkbox } from "@/components/ui/checkbox"
 import useWebSocket, { ReadyState } from 'react-use-websocket'
@@ -406,7 +406,17 @@ export default function ChatPage() {
       <div className="w-80 border-r bg-card flex flex-col h-screen">
         <div className="p-4 border-b">
           <div className="flex items-center justify-between mb-2">
-            <h2 className="font-semibold text-lg">Chats</h2>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6"
+                onClick={() => navigate('/')}
+              >
+                <Home className="h-4 w-4" />
+              </Button>
+              <h2 className="font-semibold text-lg">Chats</h2>
+            </div>
             {!selectMode && (
               <Button variant="outline" size="icon" onClick={startNewChat}>
                 <Plus className="h-4 w-4" />
