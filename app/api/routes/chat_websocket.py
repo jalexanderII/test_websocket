@@ -5,49 +5,19 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Set
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 from redis_data_structures import Set as RedisSet
 from sqlalchemy.orm import Session
 
 from app.config.redis_config import redis_manager
 from app.db.database import get_db
-from app.schemas.chat import MessageCreate
+from app.schemas.chat import Message, MessageCreate
+from app.schemas.websocket import CreateChatMessage, JoinChatMessage, SendMessageRequest
 from app.services.chat_service import ChatService
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-
-# WebSocket message schemas
-class WebSocketMessage(BaseModel):
-    """Base class for all WebSocket messages"""
-
-    action: str
-
-
-class CreateChatMessage(WebSocketMessage):
-    """Message for creating a new chat"""
-
-    action: str = "create_chat"
-    user_id: int
-    initial_message: str | None = None
-
-
-class SendMessageRequest(WebSocketMessage):
-    """Message for sending a chat message"""
-
-    action: str = "send_message"
-    chat_id: int
-    content: str
-    response_model: bool = False
-
-
-class JoinChatMessage(WebSocketMessage):
-    """Message for joining an existing chat"""
-
-    action: str = "join_chat"
-    chat_id: int
 
 
 class ConnectionManager:
@@ -116,6 +86,7 @@ class WebSocketHandler:
         websocket: WebSocket,
         user_id: int,
         chat_service: ChatService,
+        # Dependency Injection: The handler explicitly declares its dependencies. vs accesing global instance
         connection_manager: ConnectionManager,
     ):
         self.websocket = websocket
@@ -129,17 +100,18 @@ class WebSocketHandler:
             message_dict = json.loads(data)
             action = message_dict.get("action")
 
-            if action == "create_chat":
-                message = CreateChatMessage(**message_dict)
-                await self.handle_create_chat(message)
-            elif action == "send_message":
-                message = SendMessageRequest(**message_dict)
-                await self.handle_send_message(message)
-            elif action == "join_chat":
-                message = JoinChatMessage(**message_dict)
-                await self.handle_join_chat(message)
-            else:
-                await self._send_error(f"Unknown action: {action}")
+            match action:
+                case "create_chat":
+                    message = CreateChatMessage(**message_dict)
+                    await self.handle_create_chat(message)
+                case "send_message":
+                    message = SendMessageRequest(**message_dict)
+                    await self.handle_send_message(message)
+                case "join_chat":
+                    message = JoinChatMessage(**message_dict)
+                    await self.handle_join_chat(message)
+                case _:
+                    await self._send_error(f"Unknown action: {action}")
 
         except ValidationError as e:
             logger.error("Message validation error: %s", str(e))
@@ -163,7 +135,7 @@ class WebSocketHandler:
                 content=message.content,
                 is_ai=False,
             )
-            user_message = self.chat_service.send_message(message_create, self.user_id)
+            user_message = self.chat_service.send_message(message_create)
 
             # Broadcast the user message
             await self._broadcast_user_message(user_message)
@@ -213,18 +185,26 @@ class WebSocketHandler:
                     content=message.initial_message,
                     is_ai=False,
                 )
-                user_message = self.chat_service.send_message(message_create, self.user_id)
+                user_message = self.chat_service.send_message(message_create)
 
-                # Broadcast the user message
+                # Broadcast the message
                 await self._broadcast_user_message(user_message)
 
                 # Handle AI response
                 task_id = str(uuid.uuid4())
-                await self._handle_standard_response(
-                    chat.id,
-                    message.initial_message,
-                    task_id,
-                )
+                if message.response_model:
+                    await self._handle_structured_response(
+                        chat.id,
+                        message.initial_message,
+                        task_id,
+                    )
+                else:
+                    await self._handle_standard_response(
+                        chat.id,
+                        message.initial_message,
+                        task_id,
+                    )
+
                 await self._broadcast_completion(task_id)
 
         except Exception as e:
@@ -238,21 +218,10 @@ class WebSocketHandler:
         else:
             await self.manager.broadcast_to_user(self.user_id, json.dumps({"type": "chat_joined", "chat_id": chat.id}))
 
-    async def _broadcast_user_message(self, message: Any):
+    async def _broadcast_user_message(self, message: Message):
         await self.manager.broadcast_to_user(
             self.user_id,
-            json.dumps(
-                {
-                    "type": "message",
-                    "message": {
-                        "id": message.id,
-                        "chat_id": message.chat_id,
-                        "content": message.content,
-                        "is_ai": message.is_ai,
-                        "timestamp": message.timestamp.isoformat(),
-                    },
-                }
-            ),
+            json.dumps({"type": "message", "message": message.model_dump(mode="json")}),
         )
 
     async def _send_error(self, message: str):
@@ -319,7 +288,11 @@ manager = ConnectionManager()
 async def websocket_endpoint(websocket: WebSocket, user_id: int, db: Session = Depends(get_db)):
     logger.info("New WebSocket connection request for user_id: %s", user_id)
     await manager.connect(websocket, user_id)
+
+    # Each connection needs its own instances to maintain proper isolation and resource management
+    # ChatService needs a database session (db) which should be connection-specific for proper transaction management
     chat_service = ChatService(db)
+    # WebSocketHandler is created per connection because it handles the specific websocket instance and user_id for that connection
     handler = WebSocketHandler(websocket, user_id, chat_service, manager)
     logger.info("WebSocket connection established for user_id: %s", user_id)
 

@@ -12,7 +12,7 @@ from typing import (
 
 from pydantic import BaseModel
 from redis_data_structures import LRUCache, Queue
-from sqlalchemy import update
+from sqlalchemy import func, update
 from sqlalchemy.orm import Session
 
 from app.adapters.ai_adapter import OpenAIAdapter
@@ -93,7 +93,7 @@ class ChatService:
         messages = self.db.query(MessageDB).filter(MessageDB.chat_id == chat_id).all()
         return [{"role": "assistant" if msg.is_ai else "user", "content": msg.content} for msg in messages]
 
-    def send_message(self, message: MessageCreate, user_id: int) -> Message:
+    def send_message(self, message: MessageCreate) -> Message:
         # Verify chat exists
         chat = self.get_chat(message.chat_id)
         if not chat:
@@ -144,7 +144,7 @@ class ChatService:
         history = self._get_chat_history(chat_id)
         logger.debug("Got chat history with %d messages", len(history))
 
-        # Create AI message in DB
+        # Create empty AI message in DB, this will be updated when the response is streamed
         db_message = MessageDB(
             chat_id=chat_id,
             content="",
@@ -194,7 +194,7 @@ class ChatService:
         self,
         chat_id: int,
         user_message: str,
-    ) -> AsyncGenerator[StructuredResponse, None]:
+    ) -> AsyncGenerator[BaseModel, None]:
         # Get chat
         chat = self.get_chat(chat_id)
         if not chat:
@@ -232,29 +232,53 @@ class ChatService:
 
     def delete_chats(self, chat_ids: List[int]) -> None:
         """Delete multiple chats by their IDs"""
-        self.db.query(MessageDB).filter(MessageDB.chat_id.in_(chat_ids)).delete(synchronize_session=False)
-        self.db.query(ChatDB).filter(ChatDB.id.in_(chat_ids)).delete(synchronize_session=False)
-        self.db.commit()
+        if not chat_ids:
+            return
 
-        # Clear cache for deleted chats
-        for chat_id in chat_ids:
-            self.chat_cache.remove(str(chat_id))
+        try:
+            # Delete messages and chats in a transaction
+            with self.db.begin():
+                # Delete messages first due to foreign key constraint
+                deleted_messages = (
+                    self.db.query(MessageDB).filter(MessageDB.chat_id.in_(chat_ids)).delete(synchronize_session=False)
+                )
+
+                deleted_chats = self.db.query(ChatDB).filter(ChatDB.id.in_(chat_ids)).delete(synchronize_session=False)
+
+                logger.info("Deleted %d chats and %d messages", deleted_chats, deleted_messages)
+
+            # Batch remove from cache using Redis pipeline
+            with redis_manager.pipeline() as pipe:
+                for chat_id in chat_ids:
+                    self.chat_cache.remove(str(chat_id))
+                pipe.execute()
+
+        except Exception as e:
+            logger.error("Failed to delete chats: %s", str(e))
+            self.db.rollback()
+            raise
 
     def delete_empty_chats(self, user_id: int) -> int:
         """Delete all empty chats for a user. Returns number of chats deleted."""
-        empty_chats = []
-        user_chats = self.db.query(ChatDB).filter(ChatDB.user_id == user_id).all()
+        # First find all empty chats using a subquery
+        empty_chat_ids = (
+            self.db.query(ChatDB.id)
+            .outerjoin(MessageDB, ChatDB.id == MessageDB.chat_id)
+            .filter(ChatDB.user_id == user_id)
+            .group_by(ChatDB.id)
+            .having(func.count(MessageDB.id) == 0)
+            .all()
+        )
 
-        for chat in user_chats:
-            message_count = self.db.query(MessageDB).filter(MessageDB.chat_id == chat.id).count()
-            if message_count == 0:
-                empty_chats.append(chat.id)
-                self.db.delete(chat)
+        # Extract the IDs
+        empty_chat_ids = [chat_id for (chat_id,) in empty_chat_ids]
 
-        if empty_chats:
+        if empty_chat_ids:
+            self.db.query(ChatDB).filter(ChatDB.id.in_(empty_chat_ids)).delete(synchronize_session=False)
             self.db.commit()
+
             # Clear cache for deleted chats
-            for chat_id in empty_chats:
+            for chat_id in empty_chat_ids:
                 self.chat_cache.remove(str(chat_id))
 
-        return len(empty_chats)
+        return len(empty_chat_ids)
