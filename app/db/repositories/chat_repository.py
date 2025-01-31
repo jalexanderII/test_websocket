@@ -1,8 +1,7 @@
-from typing import List, Optional, cast
+from typing import List, Optional
 
 from db.models import ChatDB, MessageDB
 from schemas.chat import Chat, Message
-from sqlalchemy import Column
 from sqlalchemy.orm import Session
 
 
@@ -34,7 +33,7 @@ class ChatRepository:
             messages=[
                 Message(
                     id=msg.id,
-                    chat_id=msg.user_id,
+                    chat_id=msg.chat_id,
                     content=msg.content,
                     is_ai=msg.is_ai,
                     timestamp=msg.timestamp,
@@ -43,10 +42,10 @@ class ChatRepository:
             ],
         )
 
-    def add_message(self, chat_id: int, message: Message) -> Message:
+    def add_message(self, chat_id: int, user_id: int, message: Message) -> Message:
         db_message = MessageDB(
             chat_id=chat_id,
-            user_id=int(message.chat_id),
+            user_id=user_id,
             content=message.content,
             is_ai=message.is_ai,
         )
@@ -55,7 +54,7 @@ class ChatRepository:
         self.db.refresh(db_message)
         return Message(
             id=db_message.id,
-            chat_id=db_message.user_id,
+            chat_id=db_message.chat_id,
             content=db_message.content,
             is_ai=db_message.is_ai,
             timestamp=db_message.timestamp,
@@ -69,6 +68,16 @@ class ChatRepository:
                 user_id=chat.user_id,
                 created_at=chat.created_at,
                 updated_at=chat.updated_at,
+                messages=[
+                    Message(
+                        id=msg.id,
+                        chat_id=msg.chat_id,
+                        content=msg.content,
+                        is_ai=msg.is_ai,
+                        timestamp=msg.timestamp,
+                    )
+                    for msg in chat.messages
+                ],
             )
             for chat in db_chats
         ]
@@ -80,7 +89,7 @@ class ChatRepository:
         return [
             Message(
                 id=msg.id,
-                chat_id=msg.user_id,
+                chat_id=msg.chat_id,
                 content=msg.content,
                 is_ai=msg.is_ai,
                 timestamp=msg.timestamp,
@@ -93,14 +102,14 @@ class ChatRepository:
         if not db_message:
             raise ValueError(f"Message with id {message.id} not found")
 
-        db_message.content = cast(Column[str], message.content)
+        db_message.content = message.content
         self.db.commit()
         self.db.refresh(db_message)
 
         return Message(
             id=db_message.id,
-            chat_id=db_message.user_id,
-            content=str(db_message.content),
+            chat_id=db_message.chat_id,
+            content=db_message.content,
             is_ai=db_message.is_ai,
             timestamp=db_message.timestamp,
         )

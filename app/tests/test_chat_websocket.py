@@ -6,7 +6,8 @@ import pytest
 from fastapi.testclient import TestClient
 from fastapi.websockets import WebSocket
 
-from app.api.routes.chat_websocket import ConnectionManager, WebSocketHandler
+from app.api.routes.chat_websocket import ConnectionManager, CreateChatMessage, SendMessageRequest, WebSocketHandler
+from app.schemas.chat import MessageCreate
 from app.services.chat_service import ChatService
 
 # Test data
@@ -99,15 +100,21 @@ async def test_websocket_handler_send_message(mock_websocket, mock_chat_service,
     mock_chat_service.send_message.return_value = mock_message
 
     # Test message handling
-    message_data = MagicMock()
-    message_data.chat_id = TEST_CHAT_ID
-    message_data.content = TEST_MESSAGE
-    message_data.response_model = False
+    message_data = SendMessageRequest(
+        action="send_message", chat_id=TEST_CHAT_ID, content=TEST_MESSAGE, response_model=False
+    )
 
     await handler.handle_send_message(message_data)
 
-    # Verify chat service was called
-    mock_chat_service.send_message.assert_called_once_with(TEST_CHAT_ID, TEST_MESSAGE)
+    # Verify chat service was called with correct MessageCreate object
+    mock_chat_service.send_message.assert_called_once()
+    call_args = mock_chat_service.send_message.call_args
+    message_create, user_id = call_args[0]
+    assert isinstance(message_create, MessageCreate)
+    assert message_create.chat_id == TEST_CHAT_ID
+    assert message_create.content == TEST_MESSAGE
+    assert message_create.is_ai == False
+    assert user_id == TEST_USER_ID
 
 
 @pytest.mark.asyncio
@@ -120,7 +127,9 @@ async def test_websocket_handler_create_chat(mock_websocket, mock_chat_service, 
     mock_chat.id = TEST_CHAT_ID
     mock_chat_service.create_chat.return_value = mock_chat
 
-    await handler.handle_create_chat()
+    # Create message data
+    message_data = CreateChatMessage(action="create_chat", user_id=TEST_USER_ID)
+    await handler.handle_create_chat(message_data)
 
     # Verify chat service was called
     mock_chat_service.create_chat.assert_called_once_with(TEST_USER_ID)
@@ -158,7 +167,7 @@ async def test_websocket_handler_structured_response(mock_websocket, mock_chat_s
 
     mock_chat_service.stream_structured_ai_response.return_value = mock_stream()
 
-    await handler._handle_structured_response(TEST_CHAT_ID, TEST_MESSAGE, TEST_TASK_ID, AsyncMock())
+    await handler._handle_structured_response(TEST_CHAT_ID, TEST_MESSAGE, TEST_TASK_ID)
 
     # Verify structured response was processed
     mock_chat_service.stream_structured_ai_response.assert_called_once()

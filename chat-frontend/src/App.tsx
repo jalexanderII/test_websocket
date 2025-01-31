@@ -18,7 +18,7 @@ import useWebSocket, { ReadyState } from 'react-use-websocket'
 // API Types (matching backend)
 interface APIMessage {
   id: number;
-  user_id: string;
+  chat_id: number;
   content: string;
   is_ai: boolean;
   timestamp: string;
@@ -27,7 +27,7 @@ interface APIMessage {
 
 interface APIChat {
   id: number;
-  user_id: string;
+  user_id: number;
   title: string | null;
   created_at: string;
   updated_at: string;
@@ -37,6 +37,7 @@ interface APIChat {
 // UI Types
 interface Message {
   id: number;
+  chat_id: number;
   text: string;
   sender: 'user' | 'assistant';
   timestamp: string;
@@ -46,7 +47,7 @@ interface Message {
 
 interface Chat {
   id: number;
-  user_id: string;
+  user_id: number;
   title: string | null;
   created_at: string;
   updated_at: string;
@@ -127,6 +128,7 @@ function App() {
           }
           const newMessage: Message = {
             id: data.message.id,
+            chat_id: data.message.chat_id,
             text: data.message.content,
             sender: data.message.is_ai ? 'assistant' : 'user',
             timestamp: data.message.timestamp,
@@ -152,6 +154,7 @@ function App() {
             const timestamp = new Date().toISOString();
             return [...prev, {
               id: Date.now(),
+              chat_id: data.chat_id,
               text: '',
               sender: 'assistant',
               timestamp,
@@ -178,6 +181,7 @@ function App() {
             const timestamp = new Date().toISOString();
             return [...prev, {
               id: Date.now(),
+              chat_id: data.chat_id,
               text: data.token,
               sender: 'assistant',
               timestamp,
@@ -264,6 +268,7 @@ function App() {
       
       const formattedMessages: Message[] = chat.messages.map(msg => ({
         id: msg.id,
+        chat_id: msg.chat_id,
         text: msg.content,
         sender: msg.is_ai ? 'assistant' : 'user',
         timestamp: msg.timestamp,
@@ -305,7 +310,8 @@ function App() {
       const urlChatId = params.get('chat');
       if (!urlChatId) {
         sendWebSocketMessage(JSON.stringify({
-          action: 'create_chat'
+          action: 'create_chat',
+          user_id: 1  // Include the user_id
         }));
       }
     }
@@ -330,7 +336,10 @@ function App() {
       } else {
         // No chat ID in history state, create new chat
         if (connected) {
-          sendWebSocketMessage(JSON.stringify({ action: 'create_chat' }));
+          sendWebSocketMessage(JSON.stringify({ 
+            action: 'create_chat',
+            user_id: 1  // Include the user_id
+          }));
         }
       }
     };
@@ -342,7 +351,10 @@ function App() {
   const startNewChat = useCallback(() => {
     if (connected) {
       setMessages([]);
-      sendWebSocketMessage(JSON.stringify({ action: 'create_chat' }));
+      sendWebSocketMessage(JSON.stringify({ 
+        action: 'create_chat',
+        user_id: 1  // Include the user_id
+      }));
       setIsHistoryOpen(false);
     }
   }, [setMessages, connected, sendWebSocketMessage]);

@@ -1,5 +1,10 @@
+import os
+from typing import Generator
+
 import pytest
+import redis
 from fastapi.testclient import TestClient
+from redis_data_structures import ConnectionManager
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -46,41 +51,35 @@ def client(db_session):
     app.dependency_overrides.clear()
 
 
+@pytest.fixture(scope="session")
+def redis_config() -> dict:
+    """Get Redis configuration from environment or defaults."""
+    return {
+        "host": os.getenv("TEST_REDIS_HOST", "localhost"),
+        "port": int(os.getenv("TEST_REDIS_PORT", "6379")),
+        "db": int(os.getenv("TEST_REDIS_DB", "0")),
+    }
+
+
+@pytest.fixture(scope="session")
+def redis_client(redis_config: dict) -> Generator[redis.Redis, None, None]:
+    """Create a Redis client for testing."""
+    client = redis.Redis(**redis_config)
+    try:
+        yield client
+    finally:
+        client.close()
+
+
+@pytest.fixture(scope="session")
+def connection_manager(redis_config: dict) -> ConnectionManager:
+    """Create a ConnectionManager instance for testing."""
+    return ConnectionManager(**redis_config)
+
+
 @pytest.fixture(autouse=True)
-def mock_redis(monkeypatch):
-    """Mock Redis for all tests."""
-
-    class MockRedis:
-        def __init__(self):
-            self.data = {}
-            self.sets = {}
-
-        def get(self, key):
-            return self.data.get(key)
-
-        def set(self, key, value):
-            self.data[key] = value
-
-        def sadd(self, key, *values):
-            if key not in self.sets:
-                self.sets[key] = set()
-            self.sets[key].update(values)
-
-        def srem(self, key, *values):
-            if key in self.sets:
-                self.sets[key].difference_update(values)
-
-        def smembers(self, key):
-            return self.sets.get(key, set())
-
-        def scard(self, key):
-            return len(self.sets.get(key, set()))
-
-        def ping(self):
-            return True
-
-        def info(self):
-            return {"connected_clients": 1, "used_memory_human": "1M", "redis_version": "mock"}
-
-    monkeypatch.setattr("redis.Redis", lambda **kwargs: MockRedis())
-    return MockRedis()
+def clean_redis(redis_client: redis.Redis) -> Generator[None, None, None]:
+    """Clean Redis database before and after each test."""
+    redis_client.flushdb()
+    yield
+    redis_client.flushdb()

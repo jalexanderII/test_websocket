@@ -1,40 +1,52 @@
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
-from functools import partial
-from typing import Any, Callable, Coroutine, Dict, Optional, Set
+from typing import Any, Dict, Set
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from redis_data_structures import Set as RedisSet
 from sqlalchemy.orm import Session
 
 from app.config.redis_config import redis_manager
 from app.db.database import get_db
+from app.schemas.chat import MessageCreate
 from app.services.chat_service import ChatService
 
-
-# mock struct response
-class StrucResponse(BaseModel):
-    answer: str
-    reason: str
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
-class MessageData(BaseModel):
+# WebSocket message schemas
+class WebSocketMessage(BaseModel):
+    """Base class for all WebSocket messages"""
+
     action: str
-    chat_id: Optional[int] = None
-    content: Optional[str] = None
-    response_model: Optional[bool] = None
 
-    @classmethod
-    def from_ws_message(cls, message: str):
-        message_dict = json.loads(message)
-        return MessageData(
-            action=message_dict["action"],
-            chat_id=message_dict.get("chat_id"),
-            content=message_dict.get("content"),
-            response_model=bool(message_dict.get("response_model")),
-        )
+
+class CreateChatMessage(WebSocketMessage):
+    """Message for creating a new chat"""
+
+    action: str = "create_chat"
+    user_id: int
+
+
+class SendMessageRequest(WebSocketMessage):
+    """Message for sending a chat message"""
+
+    action: str = "send_message"
+    chat_id: int
+    content: str
+    response_model: bool = False
+
+
+class JoinChatMessage(WebSocketMessage):
+    """Message for joining an existing chat"""
+
+    action: str = "join_chat"
+    chat_id: int
 
 
 class ConnectionManager:
@@ -110,67 +122,76 @@ class WebSocketHandler:
         self.chat_service = chat_service
         self.manager = connection_manager
 
-    async def _send_interim_message(self, content: str, task_id: str) -> None:
-        """Send an interim message to the client."""
-        await self.manager.broadcast_to_user(
-            self.user_id,
-            json.dumps(
-                {
-                    "type": "interim_message",
-                    "message": {
-                        "content": content,
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                        "task_id": task_id,
-                    },
-                }
-            ),
-        )
+    async def handle_message(self, data: str) -> None:
+        """Handle incoming WebSocket messages"""
+        try:
+            message_dict = json.loads(data)
+            action = message_dict.get("action")
 
-    async def handle_send_message(self, message_data: MessageData):
-        if not message_data.chat_id or not message_data.content:
-            raise ValueError("chat_id and content are required for send_message")
+            if action == "create_chat":
+                message = CreateChatMessage(**message_dict)
+                await self.handle_create_chat(message)
+            elif action == "send_message":
+                message = SendMessageRequest(**message_dict)
+                await self.handle_send_message(message)
+            elif action == "join_chat":
+                message = JoinChatMessage(**message_dict)
+                await self.handle_join_chat(message)
+            else:
+                await self._send_error(f"Unknown action: {action}")
 
+        except ValidationError as e:
+            logger.error("Message validation error: %s", str(e))
+            await self._send_error(str(e))
+        except Exception as e:
+            logger.exception("Error handling message")
+            await self._send_error(str(e))
+
+    async def handle_send_message(self, message: SendMessageRequest):
         task_id = str(uuid.uuid4())
 
-        # Create a bound version of _send_interim_message with task_id
-        bound_interim_handler = partial(self._send_interim_message, task_id=task_id)
-
-        # Save and broadcast user message
-        message = await self.chat_service.send_message(
-            message_data.chat_id,
-            message_data.content,
+        # Create message object
+        message_create = MessageCreate(
+            chat_id=message.chat_id,
+            content=message.content,
+            is_ai=False,
         )
-        await self._broadcast_user_message(message)
 
-        # Handle AI response
-        if message_data.response_model:
-            await self._handle_structured_response(
-                message_data.chat_id,
-                message_data.content,
-                task_id,
-                bound_interim_handler,
-            )
-        else:
-            await self._handle_standard_response(
-                message_data.chat_id,
-                message_data.content,
-                task_id,
-                bound_interim_handler,
-            )
+        try:
+            # Save and broadcast user message
+            user_message = await self.chat_service.send_message(message_create, self.user_id)
+            await self._broadcast_user_message(user_message)
 
-        # Send completion notification
-        await self._broadcast_completion(task_id)
+            # Handle AI response
+            if message.response_model:
+                await self._handle_structured_response(
+                    message.chat_id,
+                    message.content,
+                    task_id,
+                )
+            else:
+                await self._handle_standard_response(
+                    message.chat_id,
+                    message.content,
+                    task_id,
+                )
 
-    async def handle_create_chat(self):
-        chat = self.chat_service.create_chat(self.user_id)
-        await self.manager.broadcast_to_user(self.user_id, json.dumps({"type": "chat_created", "chat_id": chat.id}))
+            await self._broadcast_completion(task_id)
+        except Exception as e:
+            logger.exception("Error handling message")
+            await self._send_error(str(e))
 
-    async def handle_join_chat(self, message_data: MessageData):
-        if not message_data.chat_id:
-            raise ValueError("chat_id is required for join_chat")
+    async def handle_create_chat(self, message: CreateChatMessage):
+        try:
+            chat = self.chat_service.create_chat(message.user_id)
+            logger.info("Chat created successfully with id: %s", chat.id)
+            await self.manager.broadcast_to_user(self.user_id, json.dumps({"type": "chat_created", "chat_id": chat.id}))
+        except Exception as e:
+            logger.exception("Error creating chat")
+            await self._send_error(f"Failed to create chat: {str(e)}")
 
-        chat = self.chat_service.get_chat(message_data.chat_id)
-
+    async def handle_join_chat(self, message: JoinChatMessage):
+        chat = self.chat_service.get_chat(message.chat_id)
         if not chat:
             await self._send_error("Chat not found")
         else:
@@ -184,6 +205,7 @@ class WebSocketHandler:
                     "type": "message",
                     "message": {
                         "id": message.id,
+                        "chat_id": message.chat_id,
                         "content": message.content,
                         "is_ai": message.is_ai,
                         "timestamp": message.timestamp.isoformat(),
@@ -192,62 +214,60 @@ class WebSocketHandler:
             ),
         )
 
+    async def _send_error(self, message: str):
+        await self.websocket.send_text(json.dumps({"type": "error", "message": message}))
+
+    async def _broadcast_completion(self, task_id: str):
+        await self.manager.broadcast_to_user(
+            self.user_id, json.dumps({"type": "generation_complete", "task_id": task_id})
+        )
+
     async def _handle_structured_response(
         self,
         chat_id: int,
         content: str,
         task_id: str,
-        bound_interim_handler: Callable[[str], Coroutine[Any, Any, None]],
     ):
-        async for chunk in self.chat_service.stream_structured_ai_response(
-            chat_id,
-            content,
-            response_model=StrucResponse,
-            interim_message_handler=bound_interim_handler,
-        ):
-            print(chunk)
-            await self.manager.broadcast_to_user(
-                self.user_id,
-                json.dumps(
-                    {
-                        "type": "structured_token",
-                        "data": chunk,
-                        "task_id": task_id,
-                    }
-                ),
-            )
+        try:
+            async for response in self.chat_service.stream_structured_ai_response(
+                chat_id,
+                content,
+            ):
+                await self.manager.broadcast_to_user(
+                    self.user_id,
+                    json.dumps(
+                        {
+                            "type": "structured_token",
+                            "data": response.model_dump(),
+                            "task_id": task_id,
+                        }
+                    ),
+                )
+        except Exception as e:
+            logger.exception("Error streaming structured response")
+            await self._send_error(str(e))
 
     async def _handle_standard_response(
         self,
         chat_id: int,
         content: str,
         task_id: str,
-        bound_interim_handler: Callable[[str], Coroutine[Any, Any, None]],
     ):
-        async for token in self.chat_service.stream_ai_response(
-            chat_id,
-            content,
-            interim_message_handler=bound_interim_handler,
-        ):
-            await self.manager.broadcast_to_user(
-                self.user_id,
-                json.dumps(
-                    {
-                        "type": "token",
-                        "token": token,
-                        "task_id": task_id,
-                    }
-                ),
-            )
-
-    async def _broadcast_completion(self, task_id: str):
-        await self.manager.broadcast_to_user(
-            self.user_id,
-            json.dumps({"type": "generation_complete", "task_id": task_id}),
-        )
-
-    async def _send_error(self, message: str):
-        await self.websocket.send_text(json.dumps({"type": "error", "message": message}))
+        try:
+            async for token in self.chat_service.stream_ai_response(chat_id, content):
+                await self.manager.broadcast_to_user(
+                    self.user_id,
+                    json.dumps(
+                        {
+                            "type": "token",
+                            "content": token,
+                            "task_id": task_id,
+                        }
+                    ),
+                )
+        except Exception as e:
+            logger.exception("Error streaming response")
+            await self._send_error(str(e))
 
 
 router = APIRouter()
@@ -256,17 +276,20 @@ manager = ConnectionManager()
 
 @router.websocket("/ws/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, user_id: int, db: Session = Depends(get_db)):
+    logger.info("New WebSocket connection request for user_id: %s", user_id)
     await manager.connect(websocket, user_id)
     chat_service = ChatService(db)
     handler = WebSocketHandler(websocket, user_id, chat_service, manager)
+    logger.info("WebSocket connection established for user_id: %s", user_id)
 
     try:
         while True:
             message = await websocket.receive()
             message_type = message["type"]
+            logger.info("Received message type: %s", message_type)
 
-            # Handle different WebSocket message types
             if message_type == "websocket.disconnect":
+                logger.info("WebSocket disconnect received for user_id: %s", user_id)
                 break
             elif message_type == "websocket.ping":
                 await websocket.send({"type": "websocket.pong"})
@@ -274,31 +297,22 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int, db: Session = D
             elif message_type == "websocket.receive":
                 data = message.get("text")
                 if not data:
+                    logger.warning("Received empty message data")
                     continue
 
-                try:
-                    message_data = MessageData.from_ws_message(data)
-
-                    if message_data.action == "send_message":
-                        await handler.handle_send_message(message_data)
-                    elif message_data.action == "create_chat":
-                        await handler.handle_create_chat()
-                    elif message_data.action == "join_chat":
-                        await handler.handle_join_chat(message_data)
-
-                except json.JSONDecodeError:
-                    await handler._send_error("Invalid JSON format")
-                except Exception as e:
-                    await handler._send_error(str(e))
+                logger.info("Processing WebSocket message: %s", data)
+                await handler.handle_message(data)
 
     except WebSocketDisconnect:
-        pass
+        logger.info("WebSocket disconnected for user_id: %s", user_id)
+    except Exception as e:
+        logger.exception("WebSocket error: %s", str(e))
     finally:
+        logger.info("Cleaning up WebSocket connection for user_id: %s", user_id)
         manager.disconnect(websocket, user_id)
 
 
 @router.get("/ws/health")
 async def websocket_health():
     """Health check endpoint for WebSocket service with detailed metrics"""
-    health_info = manager.get_health_info()
-    return health_info
+    return manager.get_health_info()
