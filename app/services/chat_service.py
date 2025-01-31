@@ -31,6 +31,7 @@ class ChatMessage(TypedDict):
     content: str
 
 
+# Mock Structred response type
 class StructuredResponse(BaseModel):
     """Base class for structured AI responses"""
 
@@ -46,7 +47,6 @@ class ChatService:
         self.message_queue = Queue("chat_messages", connection_manager=redis_manager)
 
     async def create_chat(self, user_id: int) -> Chat:
-        # First check if user exists, if not create one
         user = self.db.query(UserDB).filter(UserDB.id == user_id).first()
         if not user:
             user = UserDB(
@@ -70,7 +70,6 @@ class ChatService:
         return Chat.model_validate(db_chat)
 
     async def get_chat(self, chat_id: int) -> Optional[Chat]:
-        # Try cache first
         cached_chat = self.chat_cache.get(str(chat_id))
         if cached_chat:
             return Chat.model_validate(cached_chat)
@@ -81,7 +80,6 @@ class ChatService:
             return None
 
         chat = Chat.model_validate(db_chat)
-        # Cache the result
         self.chat_cache.put(str(chat_id), chat.model_dump())
         return chat
 
@@ -94,7 +92,6 @@ class ChatService:
         return [{"role": "assistant" if msg.is_ai else "user", "content": msg.content} for msg in messages]
 
     async def send_message(self, message: MessageCreate) -> Message:
-        # Verify chat exists
         chat = await self.get_chat(message.chat_id)
         if not chat:
             raise ValueError("Chat not found")
@@ -134,7 +131,7 @@ class ChatService:
         user_message: str,
     ) -> AsyncGenerator[str, None]:
         logger.info("Starting AI response stream for chat %s", chat_id)
-        # Get chat
+
         chat = await self.get_chat(chat_id)
         if not chat:
             logger.error("Chat %s not found", chat_id)
@@ -156,7 +153,6 @@ class ChatService:
         self.db.refresh(db_message)
         logger.info("Created initial AI message with ID %s", db_message.id)
 
-        # Stream response
         complete_response = ""
         try:
             logger.info("Starting to stream AI response")
@@ -174,7 +170,6 @@ class ChatService:
             self.db.commit()
             logger.info("Updated message %s with complete response (length: %d)", db_message.id, len(complete_response))
 
-            # Invalidate cache for this chat
             self.chat_cache.remove(str(chat_id))
 
         except Exception:
@@ -195,15 +190,12 @@ class ChatService:
         chat_id: int,
         user_message: str,
     ) -> AsyncGenerator[BaseModel, None]:
-        # Get chat
         chat = await self.get_chat(chat_id)
         if not chat:
             raise ValueError("Chat not found")
 
-        # Get history
         history = await self._get_chat_history(chat_id)
 
-        # Create AI message in DB
         db_message = MessageDB(
             chat_id=chat_id,
             content="",
@@ -260,6 +252,7 @@ class ChatService:
 
     def delete_empty_chats(self, user_id: int) -> int:
         """Delete all empty chats for a user. Returns number of chats deleted."""
+
         # First find all empty chats using a subquery
         empty_chat_ids = (
             self.db.query(ChatDB.id)

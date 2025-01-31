@@ -31,7 +31,6 @@ class ConnectionManager:
     async def connect(self, websocket: WebSocket, user_id: int):
         await websocket.accept()
 
-        # Add to active users set
         self.active_users.add(user_id)
 
         # Update connection metadata
@@ -56,10 +55,8 @@ class ConnectionManager:
                 user_id=user_id, last_heartbeat=datetime.now(timezone.utc), client_info=client_info, connection_count=1
             )
 
-        # Store metadata in Redis
         self.connection_metadata[meta_key] = connection_meta.model_dump(mode="json")
 
-        # Store WebSocket connection in memory
         if user_id not in self._connections:
             self._connections[user_id] = set()
         self._connections[user_id].add(websocket)
@@ -67,7 +64,7 @@ class ConnectionManager:
 
     def disconnect(self, websocket: WebSocket, user_id: int):
         if user_id in self._connections:
-            self._connections[user_id].discard(websocket)  # set.discard() is safe if element doesn't exist
+            self._connections[user_id].discard(websocket)
             if websocket in self._last_heartbeat:
                 del self._last_heartbeat[websocket]
 
@@ -78,11 +75,9 @@ class ConnectionManager:
                 connection_meta.connection_count -= 1
 
                 if connection_meta.connection_count <= 0:
-                    # Use dict del instead of remove
                     del self.connection_metadata[meta_key]
                     self.active_users.remove(user_id)
                 else:
-                    # Update metadata with decremented count
                     self.connection_metadata[meta_key] = connection_meta.model_dump()
 
             if not self._connections[user_id]:
@@ -90,7 +85,6 @@ class ConnectionManager:
 
     async def broadcast_to_user(self, user_id: int, message: str):
         if user_id in self._connections:
-            # Convert to list to fix iteration typing issue
             connections = list(self._connections[user_id])
             for connection in connections:
                 try:
@@ -118,7 +112,6 @@ class ConnectionManager:
     def get_health_info(self) -> dict:
         """Get detailed health information about WebSocket connections"""
         current_time = datetime.now(timezone.utc).timestamp()
-        # Fix sum() and len() typing issues by converting to list
         active_connections = sum(len(list(connections)) for connections in self._connections.values())
         dead_connections = sum(1 for ws in self._last_heartbeat if (current_time - self._last_heartbeat[ws]) >= 30)
 

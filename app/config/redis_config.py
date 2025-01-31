@@ -13,7 +13,6 @@ from app.config.env import (
     REDIS_SSL,
 )
 
-# Initialize a single Redis connection manager for the entire application
 redis_manager = ConnectionManager(
     host=REDIS_HOST,
     port=REDIS_PORT,

@@ -1,3 +1,4 @@
+import logging
 from typing import (
     AsyncGenerator,
     List,
@@ -18,6 +19,9 @@ from app.config.env import MODEL_NAME, OPENAI_API_KEY
 from app.schemas.ai_model import AIModel
 
 T = TypeVar("T", bound=BaseModel)
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 class ChatMessage(TypedDict):
@@ -61,7 +65,7 @@ class OpenAIAdapter(AIModel):
                 if chunk.choices[0].delta.content is not None:
                     yield chunk.choices[0].delta.content
         except Exception as e:
-            print(f"Error in stream_response: {e}")
+            logger.exception("Error in stream_response: %s", e)
             raise
 
     async def stream_structured_response(
@@ -88,7 +92,7 @@ class OpenAIAdapter(AIModel):
                     if event.type == "content.delta" and event.parsed is not None:
                         yield cast(T, event.parsed)
         except Exception as e:
-            print(f"Error in stream_structured_response: {e}")
+            logger.exception("Error in stream_structured_response: %s", e)
             raise
 
     async def generate_response(self, prompt: str, history: Optional[Sequence[ChatMessage]] = None) -> str:
@@ -108,5 +112,5 @@ class OpenAIAdapter(AIModel):
             )
             return response.choices[0].message.content or ""
         except Exception as e:
-            print(f"Error in generate_response: {e}")
+            logger.exception("Error in generate_response: %s", e)
             raise

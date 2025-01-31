@@ -1,4 +1,3 @@
-# WebSocket message schemas
 from pydantic import BaseModel
 
 

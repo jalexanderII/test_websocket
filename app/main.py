@@ -8,7 +8,7 @@ from app.db.database import Base, engine
 
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Chat Application")
+app = FastAPI(title="Websocket Chat")
 
 
 app.add_middleware(
@@ -26,7 +26,7 @@ app.include_router(websocket_router, prefix="/api", tags=["websocket"])
 
 @app.get("/")
 async def root():
-    return {"message": "Welcome to the Chat Application"}
+    return {"message": "Hello, World!"}
 
 
 if __name__ == "__main__":
