@@ -22,7 +22,7 @@ from app.schemas.chat import Chat, Message, MessageCreate
 
 T = TypeVar("T", bound=BaseModel)
 
-# Set up logging
+
 logger = logging.getLogger(__name__)
 
 

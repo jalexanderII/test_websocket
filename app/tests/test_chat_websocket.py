@@ -11,11 +11,10 @@ from fastapi.websockets import WebSocket
 
 from app.api.routes.chat_websocket import (
     ConnectionManager,
-    CreateChatMessage,
-    SendMessageRequest,
     WebSocketHandler,
 )
 from app.schemas.chat import Chat, MessageCreate
+from app.schemas.websocket import CreateChatMessage, SendMessageRequest
 from app.services.background_task_processor import TaskStatus
 from app.services.chat_service import ChatService
 
