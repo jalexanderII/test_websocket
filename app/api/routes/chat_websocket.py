@@ -294,7 +294,7 @@ class WebSocketHandler:
                     # Task completed successfully
                     result = task_data.get("result", {})
                     # Ensure result is JSON serializable
-                    if hasattr(result, "model_dump"):
+                    if result and hasattr(result, "model_dump"):
                         result = result.model_dump(mode="json")
                     await self.manager.broadcast_to_user(
                         self.user_id,
