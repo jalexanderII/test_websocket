@@ -31,6 +31,7 @@ class CreateChatMessage(WebSocketMessage):
 
     action: str = "create_chat"
     user_id: int
+    initial_message: str | None = None
 
 
 class SendMessageRequest(WebSocketMessage):
@@ -150,16 +151,21 @@ class WebSocketHandler:
     async def handle_send_message(self, message: SendMessageRequest):
         task_id = str(uuid.uuid4())
 
-        # Create message object
-        message_create = MessageCreate(
-            chat_id=message.chat_id,
-            content=message.content,
-            is_ai=False,
-        )
-
         try:
-            # Save and broadcast user message
-            user_message = await self.chat_service.send_message(message_create, self.user_id)
+            # First verify the chat exists
+            chat = self.chat_service.get_chat(message.chat_id)
+            if not chat:
+                raise ValueError("Chat not found")
+
+            # Create and save user message synchronously
+            message_create = MessageCreate(
+                chat_id=message.chat_id,
+                content=message.content,
+                is_ai=False,
+            )
+            user_message = self.chat_service.send_message(message_create, self.user_id)
+
+            # Broadcast the user message
             await self._broadcast_user_message(user_message)
 
             # Handle AI response
@@ -183,9 +189,44 @@ class WebSocketHandler:
 
     async def handle_create_chat(self, message: CreateChatMessage):
         try:
+            # Create chat synchronously
             chat = self.chat_service.create_chat(message.user_id)
             logger.info("Chat created successfully with id: %s", chat.id)
-            await self.manager.broadcast_to_user(self.user_id, json.dumps({"type": "chat_created", "chat_id": chat.id}))
+
+            # Send chat_created event
+            await self.manager.broadcast_to_user(
+                self.user_id,
+                json.dumps(
+                    {
+                        "type": "chat_created",
+                        "chat_id": chat.id,
+                        "message": message.initial_message if message.initial_message else None,
+                    }
+                ),
+            )
+
+            # If there's an initial message, send it after chat creation
+            if message.initial_message:
+                # Create and save message synchronously
+                message_create = MessageCreate(
+                    chat_id=chat.id,
+                    content=message.initial_message,
+                    is_ai=False,
+                )
+                user_message = self.chat_service.send_message(message_create, self.user_id)
+
+                # Broadcast the user message
+                await self._broadcast_user_message(user_message)
+
+                # Handle AI response
+                task_id = str(uuid.uuid4())
+                await self._handle_standard_response(
+                    chat.id,
+                    message.initial_message,
+                    task_id,
+                )
+                await self._broadcast_completion(task_id)
+
         except Exception as e:
             logger.exception("Error creating chat")
             await self._send_error(f"Failed to create chat: {str(e)}")

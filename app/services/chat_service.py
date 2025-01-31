@@ -12,6 +12,7 @@ from typing import (
 
 from pydantic import BaseModel
 from redis_data_structures import LRUCache, Queue
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from app.adapters.ai_adapter import OpenAIAdapter
@@ -92,7 +93,7 @@ class ChatService:
         messages = self.db.query(MessageDB).filter(MessageDB.chat_id == chat_id).all()
         return [{"role": "assistant" if msg.is_ai else "user", "content": msg.content} for msg in messages]
 
-    async def send_message(self, message: MessageCreate, user_id: int) -> Message:
+    def send_message(self, message: MessageCreate, user_id: int) -> Message:
         # Verify chat exists
         chat = self.get_chat(message.chat_id)
         if not chat:
@@ -169,18 +170,24 @@ class ChatService:
 
             logger.info("Stream completed, updating message in DB")
             # Update message with complete response
-            db_message.content = complete_response
-            self.db.merge(db_message)
+            self.db.execute(update(MessageDB).where(MessageDB.id == db_message.id).values(content=complete_response))
             self.db.commit()
             logger.info("Updated message %s with complete response (length: %d)", db_message.id, len(complete_response))
+
+            # Invalidate cache for this chat
+            self.chat_cache.remove(str(chat_id))
 
         except Exception:
             logger.exception("Error during streaming")
             if complete_response:
                 logger.info("Saving partial response before re-raising")
-                db_message.content = complete_response
-                self.db.merge(db_message)
-                self.db.commit()
+                try:
+                    self.db.execute(
+                        update(MessageDB).where(MessageDB.id == db_message.id).values(content=complete_response)
+                    )
+                    self.db.commit()
+                except Exception:
+                    logger.exception("Failed to save partial response")
             raise
 
     async def stream_structured_ai_response(
