@@ -1,5 +1,7 @@
 from datetime import timedelta
 
+from redis_data_structures import ConnectionManager
+
 from app.config.env import (
     REDIS_CB_THRESHOLD,
     REDIS_CB_TIMEOUT_MINS,
@@ -10,7 +12,6 @@ from app.config.env import (
     REDIS_RETRY_ATTEMPTS,
     REDIS_SSL,
 )
-from redis_data_structures import ConnectionManager
 
 # Initialize a single Redis connection manager for the entire application
 redis_manager = ConnectionManager(

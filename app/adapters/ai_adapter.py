@@ -1,21 +1,21 @@
 from typing import (
     AsyncGenerator,
-    Optional,
     List,
-    Sequence,
-    TypedDict,
     Literal,
-    cast,
+    Optional,
+    Sequence,
     Type,
+    TypedDict,
     TypeVar,
+    cast,
 )
+
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
-from app.config.env import OPENAI_API_KEY, MODEL_NAME
 from pydantic import BaseModel
 
+from app.config.env import MODEL_NAME, OPENAI_API_KEY
 from app.schemas.ai_model import AIModel
-
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -30,9 +30,7 @@ class OpenAIAdapter(AIModel):
         self.client = AsyncOpenAI(api_key=OPENAI_API_KEY)
         self.model = MODEL_NAME
 
-    def _convert_to_openai_messages(
-        self, messages: Sequence[ChatMessage]
-    ) -> List[ChatCompletionMessageParam]:
+    def _convert_to_openai_messages(self, messages: Sequence[ChatMessage]) -> List[ChatCompletionMessageParam]:
         return [
             cast(
                 ChatCompletionMessageParam,
@@ -93,9 +91,7 @@ class OpenAIAdapter(AIModel):
             print(f"Error in stream_structured_response: {e}")
             raise
 
-    async def generate_response(
-        self, prompt: str, history: Optional[Sequence[ChatMessage]] = None
-    ) -> str:
+    async def generate_response(self, prompt: str, history: Optional[Sequence[ChatMessage]] = None) -> str:
         try:
             messages = self._convert_to_openai_messages(history) if history else []
             messages.append(

@@ -92,7 +92,7 @@ class ChatRepository:
         if not db_message:
             raise ValueError(f"Message with id {message.id} not found")
 
-        setattr(db_message, "content", message.content)
+        db_message.content = message.content
         self.db.commit()
         self.db.refresh(db_message)
 

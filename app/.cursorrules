@@ -1,6 +1,6 @@
 # FastAPI Best Practices
 
-## Package Manager 
+## Package Manager
 uv (can be used is uv add .., uv run .., or uv pip ...)
 
 
@@ -220,8 +220,8 @@ async def get_post_by_id(post: dict[str, Any] = Depends(valid_post_id)):
 
 @router.put("/posts/{post_id}", response_model=PostResponse)
 async def update_post(
-    update_data: PostUpdate,  
-    post: dict[str, Any] = Depends(valid_post_id), 
+    update_data: PostUpdate,
+    post: dict[str, Any] = Depends(valid_post_id),
 ):
     updated_post = await service.update(id=post["id"], data=update_data)
     return updated_post
@@ -260,7 +260,7 @@ async def parse_jwt_data(
     return {"user_id": payload["id"]}
 
 async def valid_owned_post(
-    post: dict[str, Any] = Depends(valid_post_id), 
+    post: dict[str, Any] = Depends(valid_post_id),
     token_data: dict[str, Any] = Depends(parse_jwt_data),
 ) -> dict[str, Any]:
     if post["creator_id"] != token_data["user_id"]:
@@ -310,7 +310,7 @@ async def parse_jwt_data(
     return {"user_id": payload["id"]}
 
 async def valid_owned_post(
-    post: Mapping = Depends(valid_post_id), 
+    post: Mapping = Depends(valid_post_id),
     token_data: dict = Depends(parse_jwt_data),
 ) -> Mapping:
     if post["creator_id"] != token_data["user_id"]:
@@ -323,11 +323,11 @@ async def valid_active_creator(
     user = await users_service.get_by_id(token_data["user_id"])
     if not user["is_active"]:
         raise UserIsBanned()
-    
+
     if not user["is_creator"]:
        raise UserNotCreator()
     return user
-        
+
 # router.py
 @router.get("/users/{user_id}/posts/{post_id}", response_model=PostResponse)
 async def get_user_post(
@@ -437,7 +437,7 @@ We can use the well-known `run_in_threadpool` from starlette.
 ```python
 from fastapi import FastAPI
 from fastapi.concurrency import run_in_threadpool
-from my_sync_library import SyncAPIClient 
+from my_sync_library import SyncAPIClient
 
 app = FastAPI()
 
@@ -459,7 +459,7 @@ from pydantic import BaseModel, field_validator
 
 class ProfileCreate(BaseModel):
     username: str
-    
+
     @field_validator("password", mode="after")
     @classmethod
     def valid_password(cls, password: str) -> str:
@@ -518,7 +518,7 @@ router = APIRouter()
 
 @router.post(
     "/endpoints",
-    response_model=DefaultResponseModel,  # default response pydantic model 
+    response_model=DefaultResponseModel,  # default response pydantic model
     status_code=status.HTTP_201_CREATED,  # default status code
     description="Description of the well documented endpoint",
     tags=["Endpoint Category"],
@@ -573,7 +573,7 @@ from app.database import database, posts, profiles, post_review, products
 
 async def get_posts(
     creator_id: UUID4, *, limit: int = 10, offset: int = 0
-) -> list[dict[str, Any]]: 
+) -> list[dict[str, Any]]:
     select_query = (
         select(
             (
@@ -607,7 +607,7 @@ async def get_posts(
             desc(coalesce(posts.c.updated_at, posts.c.published_at, posts.c.created_at))
         )
     )
-    
+
     return await database.fetch_all(select_query)
 
 # app.posts.schemas
@@ -724,4 +724,3 @@ register_error_handlers(app=app)
 - Pydantic v2
 - Prisma ORM (sync)
 - DuckDB (sync)
-  

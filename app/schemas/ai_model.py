@@ -42,9 +42,6 @@ class AIModel(Protocol):
         pass
 
     @abstractmethod
-    async def generate_response(
-        self, prompt: str, history: Optional[Sequence[ChatMessage]] = None
-    ) -> str:
+    async def generate_response(self, prompt: str, history: Optional[Sequence[ChatMessage]] = None) -> str:
         """Generate a complete response."""
         pass
-

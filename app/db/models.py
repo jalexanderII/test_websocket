@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey, Text
+
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
+
 from app.db.database import Base
 
 
@@ -34,9 +36,7 @@ class ChatDB(Base):
         onupdate=datetime.now(timezone.utc),
     )
 
-    messages = relationship(
-        "MessageDB", back_populates="chat", cascade="all, delete-orphan"
-    )
+    messages = relationship("MessageDB", back_populates="chat", cascade="all, delete-orphan")
     user = relationship("UserDB", back_populates="chats")
 
 

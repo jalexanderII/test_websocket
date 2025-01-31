@@ -1,9 +1,10 @@
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
 from app.api.routes.chat_websocket import router as websocket_router
 from app.api.routes.http_endpoints import router as http_router
 from app.config.env import HOST, PORT
 from app.db.database import Base, engine
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 
 Base.metadata.create_all(bind=engine)
 

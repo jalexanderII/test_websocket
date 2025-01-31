@@ -163,9 +163,7 @@ class WebSocketHandler:
 
     async def handle_create_chat(self):
         chat = self.chat_service.create_chat(self.user_id)
-        await self.manager.broadcast_to_user(
-            self.user_id, json.dumps({"type": "chat_created", "chat_id": chat.id})
-        )
+        await self.manager.broadcast_to_user(self.user_id, json.dumps({"type": "chat_created", "chat_id": chat.id}))
 
     async def handle_join_chat(self, message_data: MessageData):
         if not message_data.chat_id:
@@ -176,9 +174,7 @@ class WebSocketHandler:
         if not chat:
             await self._send_error("Chat not found")
         else:
-            await self.manager.broadcast_to_user(
-                self.user_id, json.dumps({"type": "chat_joined", "chat_id": chat.id})
-            )
+            await self.manager.broadcast_to_user(self.user_id, json.dumps({"type": "chat_joined", "chat_id": chat.id}))
 
     async def _broadcast_user_message(self, message: Any):
         await self.manager.broadcast_to_user(
@@ -251,9 +247,7 @@ class WebSocketHandler:
         )
 
     async def _send_error(self, message: str):
-        await self.websocket.send_text(
-            json.dumps({"type": "error", "message": message})
-        )
+        await self.websocket.send_text(json.dumps({"type": "error", "message": message}))
 
 
 router = APIRouter()
@@ -261,9 +255,7 @@ manager = ConnectionManager()
 
 
 @router.websocket("/ws/{user_id}")
-async def websocket_endpoint(
-    websocket: WebSocket, user_id: int, db: Session = Depends(get_db)
-):
+async def websocket_endpoint(websocket: WebSocket, user_id: int, db: Session = Depends(get_db)):
     await manager.connect(websocket, user_id)
     chat_service = ChatService(db)
     handler = WebSocketHandler(websocket, user_id, chat_service, manager)
