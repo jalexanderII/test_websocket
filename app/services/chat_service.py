@@ -14,12 +14,12 @@ from typing import (
     TypeVar,
 )
 
-from adapters.ai_adapter import OpenAIAdapter
-from config.redis_config import redis_manager
-from db.models import ChatDB, MessageDB
+from app.adapters.ai_adapter import OpenAIAdapter
+from app.config.redis_config import redis_manager
+from app.db.models import ChatDB, MessageDB
 from pydantic import BaseModel
 from redis_data_structures import LRUCache, Queue
-from schemas.chat import Chat, Message
+from app.schemas.chat import Chat, Message
 from sqlalchemy.orm import Session
 
 T = TypeVar("T", bound=BaseModel)

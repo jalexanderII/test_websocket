@@ -109,7 +109,7 @@ function App() {
   const lastPongRef = useRef<number>(Date.now());
   const wsRef = useRef<WebSocket | null>(null);
 
-  const { sendMessage: sendWebSocketMessage, readyState, getWebSocket } = useWebSocket('ws://localhost:8005/ws/1', {
+  const { sendMessage: sendWebSocketMessage, readyState, getWebSocket } = useWebSocket('ws://localhost:8005/api/ws/1', {
     onMessage: (event) => {
       const data = JSON.parse(event.data);
       console.log('WebSocket message received:', data);

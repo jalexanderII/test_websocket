@@ -1,6 +1,6 @@
 from datetime import timedelta
 
-from config.env import (
+from app.config.env import (
     REDIS_CB_THRESHOLD,
     REDIS_CB_TIMEOUT_MINS,
     REDIS_DB,

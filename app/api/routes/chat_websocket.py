@@ -4,13 +4,14 @@ from datetime import datetime, timezone
 from functools import partial
 from typing import Any, Callable, Coroutine, Dict, Optional, Set
 
-from config.redis_config import redis_manager
-from db.database import get_db
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from redis_data_structures import Set as RedisSet
-from services.chat_service import ChatService
 from sqlalchemy.orm import Session
+
+from app.config.redis_config import redis_manager
+from app.db.database import get_db
+from app.services.chat_service import ChatService
 
 
 # mock struct response

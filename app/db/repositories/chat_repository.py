@@ -1,8 +1,8 @@
 from typing import List, Optional
-from sqlalchemy.orm import Session
 
 from db.models import ChatDB, MessageDB
 from schemas.chat import Chat, Message
+from sqlalchemy.orm import Session
 
 
 class ChatRepository:

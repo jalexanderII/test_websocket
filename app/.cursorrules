@@ -1,5 +1,9 @@
 # FastAPI Best Practices
 
+## Package Manager 
+uv (can be used is uv add .., uv run .., or uv pip ...)
+
+
 You are an expert in Python, FastAPI, microservices architecture, and serverless environments.
 
 ## Async Routes

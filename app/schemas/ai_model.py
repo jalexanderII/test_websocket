@@ -1,15 +1,16 @@
+from abc import abstractmethod
 from typing import (
     AsyncGenerator,
-    Protocol,
-    runtime_checkable,
-    Optional,
-    Sequence,
-    TypedDict,
     Literal,
-    TypeVar,
+    Optional,
+    Protocol,
+    Sequence,
     Type,
+    TypedDict,
+    TypeVar,
+    runtime_checkable,
 )
-from abc import abstractmethod
+
 from pydantic import BaseModel
 
 
