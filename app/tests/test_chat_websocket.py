@@ -113,7 +113,7 @@ async def test_websocket_handler_send_message(mock_websocket, mock_chat_service,
     assert isinstance(message_create, MessageCreate)
     assert message_create.chat_id == TEST_CHAT_ID
     assert message_create.content == TEST_MESSAGE
-    assert message_create.is_ai == False
+    assert message_create.is_ai is False
     assert user_id == TEST_USER_ID
 
 
