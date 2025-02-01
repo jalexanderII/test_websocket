@@ -1,4 +1,4 @@
-from typing import AsyncGenerator, List, Optional, Sequence
+from typing import AsyncGenerator, List, Sequence
 
 import pytest
 
@@ -19,7 +19,7 @@ class MockPipeline(BasePipeline):
         self.history: List[ChatMessage] = []
 
     def execute(
-        self, message: str, history: Optional[Sequence[ChatMessage]] = None
+        self, message: str, history: Sequence[ChatMessage] | None = None
     ) -> AsyncGenerator[AIResponse, None]:
         async def generate():
             self.messages.append(message)
@@ -34,12 +34,12 @@ class MockAIAdapter(OpenAIAdapter):
     """Mock AI adapter for testing pipelines"""
 
     async def stream_response(
-        self, prompt: str, history: Optional[Sequence[ChatMessage]] = None
+        self, prompt: str, history: Sequence[ChatMessage] | None = None
     ) -> AsyncGenerator[str, None]:
         yield "test response"
 
     async def stream_structured_response(
-        self, prompt: str, response_model: type, history: Optional[Sequence[ChatMessage]] = None
+        self, prompt: str, response_model: type, history: Sequence[ChatMessage] | None = None
     ) -> AsyncGenerator[PlanDetails, None]:
         yield PlanDetails(steps=["step 1", "step 2"], reasoning="test reasoning")
 

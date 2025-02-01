@@ -51,7 +51,7 @@ def mock_background_processor():
 
     async def mock_add_task(func, *args, **kwargs):
         # Execute the task function immediately for testing
-        result = await func(*args, **kwargs)
+        await func(*args, **kwargs)
         return "test_task_id"
 
     async def mock_get_task_result(*args, **kwargs):

@@ -1,4 +1,4 @@
-from typing import AsyncGenerator, Optional, Sequence
+from typing import AsyncGenerator, Sequence
 
 from app.services.ai.adapter import ChatMessage
 from app.services.ai.pipelines.base import AIResponse, BasePipeline
@@ -14,7 +14,7 @@ class StandardPipeline(BasePipeline):
     def execute(
         self,
         message: str,
-        history: Optional[Sequence[ChatMessage]] = None,
+        history: Sequence[ChatMessage] | None = None,
     ) -> AsyncGenerator[AIResponse, None]:
         """Execute the pipeline on a message"""
 

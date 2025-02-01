@@ -14,7 +14,7 @@ class UniversalEncoder(json.JSONEncoder):
     """
 
     def default(self, o: Any) -> Any:
-        if isinstance(o, (int, float, bool)):
+        if isinstance(o, int | float | bool):
             return str(o)
         if isinstance(o, str):
             return o
@@ -30,7 +30,7 @@ class UniversalEncoder(json.JSONEncoder):
                 return o.model_dump()
             except Exception:
                 return o.dict()
-        elif isinstance(o, (datetime, date, time)):
+        elif isinstance(o, datetime | date | time):
             return o.isoformat()
         elif isinstance(o, timedelta):
             return o.total_seconds()

@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List
 
 from sqlalchemy.orm import Session
 
@@ -22,7 +22,7 @@ class ChatRepository:
             updated_at=db_chat.updated_at,
         )
 
-    def get_chat(self, chat_id: int) -> Optional[Chat]:
+    def get_chat(self, chat_id: int) -> Chat | None:
         db_chat = self.db.query(ChatDB).filter(ChatDB.id == chat_id).first()
         if not db_chat:
             return None

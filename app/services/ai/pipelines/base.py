@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import AsyncGenerator, Dict, Optional, Sequence
+from typing import AsyncGenerator, Dict, Sequence
 
 from pydantic import BaseModel
 
@@ -12,8 +12,8 @@ class AIResponse(BaseModel):
 
     content: str
     response_type: str = "stream"  # stream, structured, complete
-    model_output: Optional[BaseModel] = None
-    metadata: Optional[Dict] = None
+    model_output: BaseModel | None = None
+    metadata: Dict | None = None
 
 
 class BasePipeline(ABC):
@@ -26,7 +26,7 @@ class BasePipeline(ABC):
     def execute(
         self,
         message: str,
-        history: Optional[Sequence[ChatMessage]] = None,
+        history: Sequence[ChatMessage] | None = None,
     ) -> AsyncGenerator[AIResponse, None]:
         """Execute the pipeline on a message"""
 

@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import List
 
 from pydantic import BaseModel, ConfigDict
 
@@ -15,7 +15,7 @@ class MessageCreate(MessageBase):
     """Schema for creating a new message"""
 
     chat_id: int
-    task_id: Optional[str] = None
+    task_id: str | None = None
 
 
 class Message(MessageBase):
@@ -26,13 +26,13 @@ class Message(MessageBase):
     id: int
     chat_id: int
     timestamp: datetime
-    task_id: Optional[str] = None
+    task_id: str | None = None
 
 
 class ChatBase(BaseModel):
     """Base class for chat schemas"""
 
-    title: Optional[str] = None
+    title: str | None = None
 
 
 class ChatCreate(ChatBase):

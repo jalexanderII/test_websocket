@@ -2,7 +2,6 @@ from abc import abstractmethod
 from typing import (
     AsyncGenerator,
     Literal,
-    Optional,
     Protocol,
     Sequence,
     Type,
@@ -26,7 +25,7 @@ T = TypeVar("T", bound=BaseModel)
 class AIModel(Protocol):
     @abstractmethod
     async def stream_response(
-        self, prompt: str, history: Optional[Sequence[ChatMessage]] = None
+        self, prompt: str, history: Sequence[ChatMessage] | None = None
     ) -> AsyncGenerator[str, None]:
         """Stream the AI response token by token."""
         pass
@@ -36,12 +35,12 @@ class AIModel(Protocol):
         self,
         prompt: str,
         response_model: Type[T],
-        history: Optional[Sequence[ChatMessage]] = None,
+        history: Sequence[ChatMessage] | None = None,
     ) -> AsyncGenerator[T, None]:
         """Stream the AI response as structured data."""
         pass
 
     @abstractmethod
-    async def generate_response(self, prompt: str, history: Optional[Sequence[ChatMessage]] = None) -> str:
+    async def generate_response(self, prompt: str, history: Sequence[ChatMessage] | None = None) -> str:
         """Generate a complete response."""
         pass
