@@ -123,7 +123,11 @@ export default function ChatPage() {
           }
           setMessages(prev => {
             const lastMessage = prev[prev.length - 1];
-            if (lastMessage && lastMessage.sender === 'assistant' && lastMessage.task_id === data.task_id?.toString()) {
+            if (lastMessage && 
+                lastMessage.sender === 'assistant' && 
+                lastMessage.task_id === data.task_id?.toString() &&
+                !lastMessage.structured  // Don't append to structured messages
+            ) {
               const newMessages = [...prev];
               newMessages[newMessages.length - 1] = {
                 ...lastMessage,
@@ -144,23 +148,54 @@ export default function ChatPage() {
           break;
         }
         case 'structured_response': {
-          console.log('Structured response received:', data.content);
+          console.log('Structured response received:', {
+            content: data.content,
+            metadata: data.metadata,
+            task_id: data.task_id
+          });
           if (!isStreaming) {
             setIsStreaming(true);
           }
           try {
             const structuredData = JSON.parse(data.content);
+            const structuredId = data.metadata?.structured_id;
+            console.log('Parsed structured data:', {
+              data: structuredData,
+              id: structuredId
+            });
+            
             setMessages(prev => {
+              // If we have a structured_id and an existing message with this ID, update it
+              if (structuredId) {
+                const existingMessageIndex = prev.findIndex(
+                  msg => msg.structured && msg.metadata?.structured_id === structuredId
+                );
+                
+                if (existingMessageIndex !== -1) {
+                  console.log('Updating existing structured message at index:', existingMessageIndex);
+                  const newMessages = [...prev];
+                  newMessages[existingMessageIndex] = {
+                    ...newMessages[existingMessageIndex],
+                    structured: structuredData
+                  };
+                  return newMessages;
+                }
+              }
+              
+              // Otherwise create a new message
+              console.log('Creating new structured message');
               const timestamp = new Date().toISOString();
-              return [...prev, {
+              const newMessage: Message = {
                 id: Date.now(),
                 chat_id: data.chat_id,
                 text: '',
-                sender: 'assistant',
+                sender: 'assistant' as const,
                 timestamp,
                 task_id: data.task_id?.toString(),
-                structured: structuredData
-              }];
+                structured: structuredData,
+                metadata: data.metadata
+              };
+              return [...prev, newMessage];
             });
           } catch (error) {
             console.error('Error parsing structured response:', error);
@@ -431,6 +466,7 @@ export default function ChatPage() {
         action: 'send_message',
         chat_id: currentChatId,
         content: inputMessage,
+        pipeline_type: 'planning'
       };
       console.log('[WebSocket] Message object:', messageObj);
       try {

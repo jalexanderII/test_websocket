@@ -1,4 +1,6 @@
+import json
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import (
     AsyncGenerator,
@@ -7,6 +9,7 @@ from typing import (
     TypeVar,
 )
 
+from pipelines.base import AIResponse
 from pydantic import BaseModel
 from redis_data_structures import LRUCache, Queue
 from sqlalchemy import func, update
@@ -201,12 +204,19 @@ class ChatService:
         self.db.refresh(db_message)
         logger.info("Created initial structured AI message with ID %s and task_id %s", db_message.id, task_id)
 
+        structured_id = str(uuid.uuid4())
+
         try:
-            async for response in self.ai_service.stream_structured_response(
+            async for stream_struc in self.ai_service.stream_structured_response(
                 user_message,
                 StructuredResponse,
                 history=history,
             ):
+                response = AIResponse(
+                    content=json.dumps(stream_struc),
+                    response_type="structured",
+                    metadata={"structured_id": structured_id},
+                )
                 yield response
                 # Update message with latest response
                 db_message.content = response.model_dump_json()

@@ -155,6 +155,7 @@ class WebSocketHandler:
                                 "content": response.content,
                                 "task_id": task_id,
                                 "chat_id": chat_id,
+                                "metadata": response.metadata,
                             }
                         ),
                     )
@@ -426,10 +427,13 @@ class WebSocketHandler:
                     self.user_id,
                     json.dumps(
                         {
-                            "type": "structured_update",
-                            "content": response if isinstance(response, dict) else response.model_dump(),
+                            "type": "structured_response",
+                            "content": response.model_dump() if hasattr(response, "model_dump") else response,
                             "task_id": task_id,
                             "chat_id": chat_id,
+                            "metadata": response.model_dump().get("metadata")
+                            if hasattr(response, "model_dump")
+                            else None,
                         }
                     ),
                 )

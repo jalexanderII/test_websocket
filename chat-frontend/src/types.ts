@@ -26,6 +26,7 @@ export interface Message {
   timestamp: string;
   task_id?: string;
   structured?: JsonValue;
+  metadata?: Record<string, JsonValue>;
 }
 
 export interface Chat {

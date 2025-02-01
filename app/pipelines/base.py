@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import AsyncGenerator, Optional, Sequence
+from typing import AsyncGenerator, Dict, Optional, Sequence
 
 from pydantic import BaseModel
 
@@ -13,6 +13,7 @@ class AIResponse(BaseModel):
     content: str
     response_type: str = "stream"  # stream, structured, complete
     model_output: Optional[BaseModel] = None
+    metadata: Optional[Dict] = None
 
 
 class BasePipeline(ABC):
