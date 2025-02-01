@@ -1,3 +1,5 @@
+from typing import Optional
+
 from pydantic import BaseModel
 
 
@@ -12,7 +14,7 @@ class CreateChatMessage(WebSocketMessage):
 
     action: str = "create_chat"
     user_id: int
-    initial_message: str | None = None
+    initial_message: Optional[str] = None
     response_model: bool = False
 
 
@@ -22,6 +24,7 @@ class SendMessageRequest(WebSocketMessage):
     action: str = "send_message"
     chat_id: int
     content: str
+    pipeline_type: Optional[str] = None
     response_model: bool = False
 
 

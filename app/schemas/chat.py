@@ -15,6 +15,7 @@ class MessageCreate(MessageBase):
     """Schema for creating a new message"""
 
     chat_id: int
+    task_id: Optional[str] = None
 
 
 class Message(MessageBase):

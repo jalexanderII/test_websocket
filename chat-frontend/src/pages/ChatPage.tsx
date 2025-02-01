@@ -71,11 +71,11 @@ export default function ChatPage() {
       lastPongRef.current = Date.now();
 
       const data = JSON.parse(event.data);
-      console.log('WebSocket message received:', data);
+      console.log('[WebSocket] Message received:', data);
 
       switch (data.type) {
         case 'chat_created': {
-          console.log('Chat created with ID:', data.chat_id);
+          console.log('[WebSocket] Chat created with ID:', data.chat_id);
           setCurrentChatId(data.chat_id);
           const newUrl = new URL(window.location.href);
           newUrl.searchParams.delete('message');
@@ -84,8 +84,13 @@ export default function ChatPage() {
           fetchChatHistory();
           break;
         }
+        case 'chat_joined': {
+          console.log('[WebSocket] Successfully joined chat:', data.chat_id);
+          setCurrentChatId(data.chat_id);
+          break;
+        }
         case 'message': {
-          console.log('Message received:', data.message);
+          console.log('[WebSocket] Message received:', data.message);
           if (data.message.is_ai && !isStreaming) {
             setIsStreaming(true);
           }
@@ -93,12 +98,14 @@ export default function ChatPage() {
             id: data.message.id,
             chat_id: data.message.chat_id,
             text: data.message.content,
-            sender: data.message.is_ai ? 'assistant' : 'user',
+            sender: data.message.is_ai ? 'assistant' : 'user' as const,
             timestamp: data.message.timestamp,
-            task_id: data.message.task_id
+            task_id: data.message.task_id?.toString()
           };
+          console.log('[WebSocket] Adding new message to state:', newMessage);
           setMessages(prev => {
             if (prev.some(msg => msg.id === newMessage.id)) {
+              console.log('[WebSocket] Message already exists, skipping');
               return prev;
             }
             return [...prev, newMessage];
@@ -116,7 +123,7 @@ export default function ChatPage() {
           }
           setMessages(prev => {
             const lastMessage = prev[prev.length - 1];
-            if (lastMessage && lastMessage.sender === 'assistant' && lastMessage.task_id === data.task_id) {
+            if (lastMessage && lastMessage.sender === 'assistant' && lastMessage.task_id === data.task_id?.toString()) {
               const newMessages = [...prev];
               newMessages[newMessages.length - 1] = {
                 ...lastMessage,
@@ -124,16 +131,40 @@ export default function ChatPage() {
               };
               return newMessages;
             }
-            const timestamp = new Date().toISOString();
+            // Create a new streaming message
             return [...prev, {
               id: Date.now(),
               chat_id: data.chat_id,
               text: data.content,
-              sender: 'assistant',
-              timestamp,
-              task_id: data.task_id
+              sender: 'assistant' as const,
+              timestamp: new Date().toISOString(),
+              task_id: data.task_id?.toString()
             }];
           });
+          break;
+        }
+        case 'structured_response': {
+          console.log('Structured response received:', data.content);
+          if (!isStreaming) {
+            setIsStreaming(true);
+          }
+          try {
+            const structuredData = JSON.parse(data.content);
+            setMessages(prev => {
+              const timestamp = new Date().toISOString();
+              return [...prev, {
+                id: Date.now(),
+                chat_id: data.chat_id,
+                text: '',
+                sender: 'assistant',
+                timestamp,
+                task_id: data.task_id?.toString(),
+                structured: structuredData
+              }];
+            });
+          } catch (error) {
+            console.error('Error parsing structured response:', error);
+          }
           break;
         }
         case 'task_completed': {
@@ -146,19 +177,37 @@ export default function ChatPage() {
           break;
         }
         case 'task_failed': {
-          console.error('Task failed:', data.error);
+          console.error('[WebSocket] Task failed:', data.error);
+          setIsStreaming(false);
+          // Show error in UI
+          setMessages(prev => [...prev, {
+            id: Date.now(),
+            chat_id: currentChatId || 0,
+            text: `Error: ${data.error}`,
+            sender: 'assistant',
+            timestamp: new Date().toISOString(),
+            error: true
+          }]);
+          break;
+        }
+        case 'error': {
+          console.error('[WebSocket] Error received:', data.message);
+          // Show error in UI
+          setMessages(prev => [...prev, {
+            id: Date.now(),
+            chat_id: currentChatId || 0,
+            text: `Error: ${data.message}`,
+            sender: 'assistant',
+            timestamp: new Date().toISOString(),
+            error: true
+          }]);
+          break;
+        }
+        case 'generation_complete': {
+          console.log('Generation completed for task:', data.task_id);
           setIsStreaming(false);
           break;
         }
-        case 'error':
-          console.error('WebSocket error:', data.message);
-          setIsStreaming(false);
-          break;
-        case 'generation_complete':
-          console.log('Generation completed for task:', data.task_id);
-          setIsStreaming(false);
-          fetchChatHistory();
-          break;
         default:
           console.warn('Unknown message type:', data.type);
       }
@@ -224,32 +273,125 @@ export default function ChatPage() {
 
   const loadChat = useCallback(async (chatId: number) => {
     try {
+      console.log('[Chat] Loading chat:', chatId);
       const response = await fetch(`http://localhost:8005/api/chats/${chatId}`);
       if (!response.ok) throw new Error('Failed to fetch chat');
       const chat: APIChat = await response.json();
+      console.log('[Chat] Fetched chat data:', chat);
+      console.log('[Chat] Raw messages from API:', chat.messages);
       
-      const formattedMessages: Message[] = chat.messages.map(msg => ({
-        id: msg.id,
-        chat_id: msg.chat_id,
-        text: msg.content,
-        sender: msg.is_ai ? 'assistant' : 'user',
-        timestamp: msg.timestamp,
-        task_id: msg.task_id
-      }));
+      // Process messages, ensuring proper content handling
+      const formattedMessages: Message[] = chat.messages.map(msg => {
+        console.log('[Chat] Processing message:', {
+          id: msg.id,
+          is_ai: msg.is_ai,
+          content_length: msg.content.length,
+          content_preview: msg.content.slice(0, 100),
+          task_id: msg.task_id
+        });
+        
+        // For AI messages, ensure content is properly handled as a single message
+        const content = msg.content;
+        
+        // If it's a structured response, try to parse it
+        if (msg.is_ai && msg.content.startsWith('{') && msg.content.endsWith('}')) {
+          try {
+            const structured = JSON.parse(msg.content);
+            console.log('[Chat] Parsed structured content:', structured);
+            return {
+              id: msg.id,
+              chat_id: msg.chat_id,
+              text: '',
+              sender: 'assistant',
+              timestamp: msg.timestamp,
+              task_id: msg.task_id,
+              structured
+            };
+          } catch (e) {
+            console.warn('[Chat] Failed to parse structured content:', e);
+          }
+        }
+        
+        const message = {
+          id: msg.id,
+          chat_id: msg.chat_id,
+          text: content,
+          sender: msg.is_ai ? 'assistant' : 'user' as const,
+          timestamp: msg.timestamp,
+          task_id: msg.task_id
+        };
+        console.log('[Chat] Created formatted message:', message);
+        return message;
+      });
       
+      console.log('[Chat] All formatted messages:', formattedMessages);
       setMessages(formattedMessages);
       setCurrentChatId(chatId);
 
+      // Only join the chat if we're connected
       if (connected) {
+        console.log('[WebSocket] Sending join_chat message for chat:', chatId);
         sendWebSocketMessage(JSON.stringify({
           action: 'join_chat',
           chat_id: chatId
         }));
+      } else {
+        console.warn('[WebSocket] Not connected, cannot join chat');
+        // Retry joining chat when connection is established
+        const retryInterval = setInterval(() => {
+          if (connected) {
+            console.log('[WebSocket] Connection established, retrying join chat');
+            sendWebSocketMessage(JSON.stringify({
+              action: 'join_chat',
+              chat_id: chatId
+            }));
+            clearInterval(retryInterval);
+          }
+        }, 1000);
+        // Clear interval after 10 seconds to prevent infinite retries
+        setTimeout(() => clearInterval(retryInterval), 10000);
       }
     } catch (error) {
-      console.error('Error loading chat:', error);
+      console.error('[Chat] Error loading chat:', error);
     }
   }, [setMessages, connected, sendWebSocketMessage]);
+
+  // Add logging to message rendering
+  const renderMessage = useCallback((message: Message) => {
+    console.log('[Chat] Rendering message:', {
+      id: message.id,
+      sender: message.sender,
+      text_length: message.text.length,
+      text_preview: message.text.slice(0, 100),
+      task_id: message.task_id,
+      has_structured: !!message.structured
+    });
+    
+    return (
+      <div
+        key={`${message.id}-${message.timestamp || Date.now()}`}
+        className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}
+      >
+        <div
+          className={`
+            max-w-[80%] rounded-lg px-4 py-2 break-words relative whitespace-pre-wrap
+            ${message.sender === 'user' 
+              ? 'bg-primary text-primary-foreground' 
+              : 'bg-muted'
+            }
+          `}
+        >
+          {message.structured ? (
+            <div className="space-y-2">
+              {renderStructuredData(message.structured)}
+            </div>
+          ) : (
+            message.text
+          )}
+        </div>
+      </div>
+    );
+  }, []);
 
   useEffect(() => {
     const chatId = searchParams.get('chat');
@@ -282,15 +424,33 @@ export default function ChatPage() {
   }, [setMessages, connected, sendWebSocketMessage, userId]);
 
   const sendMessage = () => {
+    console.log('[Chat] Attempting to send message. Connected:', connected, 'CurrentChatId:', currentChatId);
     if (inputMessage.trim() && connected && currentChatId) {
-      console.log('Sending message to chat:', currentChatId);
+      console.log('[WebSocket] Sending message to chat:', currentChatId);
       const messageObj = {
         action: 'send_message',
         chat_id: currentChatId,
         content: inputMessage,
       };
-      sendWebSocketMessage(JSON.stringify(messageObj));
-      setInputMessage('');
+      console.log('[WebSocket] Message object:', messageObj);
+      try {
+        sendWebSocketMessage(JSON.stringify(messageObj));
+        setInputMessage('');
+      } catch (error) {
+        console.error('[WebSocket] Error sending message:', error);
+        setMessages(prev => [...prev, {
+          id: Date.now(),
+          chat_id: currentChatId,
+          text: `Error sending message: ${error}`,
+          sender: 'assistant',
+          timestamp: new Date().toISOString(),
+          error: true
+        }]);
+      }
+    } else if (!currentChatId) {
+      console.warn('[Chat] Attempted to send message without active chat');
+    } else if (!connected) {
+      console.warn('[Chat] Attempted to send message while disconnected');
     }
   };
 
@@ -536,30 +696,7 @@ export default function ChatPage() {
             ref={scrollContainerRef}
             className="flex-1 overflow-y-auto space-y-4"
           >
-            {messages.map((message, index) => (
-              <div
-                key={`${message.id || index}-${message.timestamp || Date.now()}`}
-                className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}
-              >
-                <div
-                  className={`
-                    max-w-[80%] rounded-lg px-4 py-2 break-words relative
-                    ${message.sender === 'user' 
-                      ? 'bg-primary text-primary-foreground' 
-                      : 'bg-muted'
-                    }
-                  `}
-                >
-                  {message.structured ? (
-                    <div className="space-y-2">
-                      {renderStructuredData(message.structured)}
-                    </div>
-                  ) : (
-                    message.text
-                  )}
-                </div>
-              </div>
-            ))}
+            {messages.map(message => renderMessage(message))}
             <div ref={messagesEndRef} />
           </div>
 

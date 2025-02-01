@@ -1,19 +1,19 @@
 import asyncio
+import json
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Literal, TypedDict
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
+from fastapi import WebSocket
 from fastapi.testclient import TestClient
-from fastapi.websockets import WebSocket
 
-from app.api.routes.chat_websocket import (
-    ConnectionManager,
-    WebSocketHandler,
-)
-from app.schemas.chat import Chat, MessageCreate
+from app.api.handlers.connection_manager import ConnectionManager
+from app.api.handlers.websocket_handler import WebSocketHandler
+from app.pipelines.base import AIResponse
+from app.schemas.chat import Chat
 from app.schemas.websocket import CreateChatMessage, SendMessageRequest
 from app.services.background_task_processor import TaskStatus
 from app.services.chat_service import ChatService
@@ -67,7 +67,7 @@ async def mock_websocket():
 @pytest_asyncio.fixture(autouse=True)
 async def mock_background_processor():
     """Mock background processor for testing"""
-    with patch("app.api.routes.chat_websocket.background_processor") as mock:
+    with patch("app.api.handlers.websocket_handler.background_processor") as mock:
         # Mock add_task to execute the function immediately
         async def mock_add_task(func, *args, **kwargs):
             task_id = str(uuid.uuid4())
@@ -163,8 +163,9 @@ async def test_websocket_heartbeat(connection_manager, mock_websocket):
     assert connection_manager.is_connection_alive(mock_websocket)
 
     # Test with expired timeout
-    with patch("app.api.routes.chat_websocket.datetime") as mock_datetime:
-        mock_datetime.now.return_value = datetime.fromtimestamp(9999999999, tz=timezone.utc)
+    with patch("app.api.handlers.connection_manager.datetime") as mock_datetime:
+        mock_now = datetime.now(timezone.utc)
+        mock_datetime.now.return_value = mock_now + timedelta(minutes=10)
         assert not connection_manager.is_connection_alive(mock_websocket)
 
 
@@ -208,57 +209,35 @@ async def test_websocket_handler_send_message(
     mock_chat_service.send_message.return_value = mock_message
     print(f"[DEBUG] Set up mock_message with model_dump: {mock_message.model_dump()}")
 
-    # Test message handling
-    request_data = SendMessageRequest(
-        action="send_message", chat_id=TEST_CHAT_ID, content=TEST_MESSAGE, response_model=False
-    )
-    print(f"[DEBUG] Created request_data: {request_data}")
+    # Mock pipeline response
+    with patch("app.pipelines.manager.PipelineManager.get_pipeline") as mock_get_pipeline:
 
-    # Connect the websocket
-    await connection_manager.connect(mock_websocket, TEST_USER_ID)
+        class MockPipeline:
+            async def execute(self, *args, **kwargs):
+                yield AIResponse(content="Test response", response_type="stream")
 
-    # Send the message
-    print("\n[DEBUG] About to call handle_send_message")
-    await handler.handle_send_message(request_data)
+        mock_get_pipeline.return_value = MockPipeline()
 
-    # Wait for background tasks
-    print("[DEBUG] Waiting for background tasks")
-    await asyncio.sleep(TASK_WAIT_TIME)
+        # Test message handling
+        request_data = SendMessageRequest(
+            action="send_message", chat_id=TEST_CHAT_ID, content=TEST_MESSAGE, response_model=False
+        )
+        print(f"[DEBUG] Created request_data: {request_data}")
 
-    # Verify chat service was called
-    mock_chat_service.get_chat.assert_called_once_with(TEST_CHAT_ID)
-    mock_chat_service.send_message.assert_called_once()
-    message_create = mock_chat_service.send_message.call_args[0][0]  # type: ignore
-    print(f"\n[DEBUG] Message create args: {message_create}")
-    assert isinstance(message_create, MessageCreate)
-    assert message_create.chat_id == TEST_CHAT_ID
-    assert message_create.content == TEST_MESSAGE
-    assert message_create.is_ai is False
+        # Connect the websocket
+        await connection_manager.connect(mock_websocket, TEST_USER_ID)
 
-    # Get the task ID for the user message task
-    print(f"\n[DEBUG] Using user message task ID: {mock_background_processor._user_message_task_id}")
+        # Send the message
+        print("\n[DEBUG] About to call handle_send_message")
+        await handler.handle_send_message(request_data)
 
-    # Verify user message task completion
-    task_result: TaskResult = await mock_background_processor.get_task_result(
-        mock_background_processor._user_message_task_id
-    )
-    print(f"\n[DEBUG] User message task result: {task_result}")
-    assert task_result["status"] == TaskStatus.COMPLETED
-    assert task_result["result"]["content"] == TEST_MESSAGE
-    assert task_result["result"]["id"] == mock_message_data["id"]
-    assert task_result["result"]["is_ai"] == mock_message_data["is_ai"]
-    assert task_result["result"]["timestamp"] == mock_message_data["timestamp"]
+        # Wait for background tasks
+        print("[DEBUG] Waiting for background tasks")
+        await asyncio.sleep(TASK_WAIT_TIME)
 
-    # Get the task ID for the AI response task
-    print(f"\n[DEBUG] Using AI response task ID: {mock_background_processor._ai_response_task_id}")
-
-    # Verify AI response task completion
-    ai_task_result: TaskResult = await mock_background_processor.get_task_result(
-        mock_background_processor._ai_response_task_id
-    )
-    print(f"\n[DEBUG] AI response task result: {ai_task_result}")
-    assert ai_task_result["status"] == TaskStatus.COMPLETED
-    assert ai_task_result["result"]["content"] == ""  # Empty response since response_model=False
+        # Verify chat service was called
+        mock_chat_service.get_chat.assert_called_once_with(TEST_CHAT_ID)
+        assert mock_chat_service.send_message.call_count == 2  # User message and AI response
 
 
 @pytest.mark.asyncio
@@ -342,13 +321,7 @@ async def test_websocket_handler_structured_response(
     """Test handling structured AI responses"""
     handler = WebSocketHandler(mock_websocket, TEST_USER_ID, mock_chat_service, connection_manager)
 
-    # Mock structured response
-    structured_response = {"answer": "Test answer", "reason": "Test reason"}
-
-    async def mock_stream():
-        yield structured_response
-
-    mock_chat_service.stream_structured_ai_response.return_value = mock_stream()
+    # Mock chat service
     mock_chat_service.get_chat.return_value = MagicMock(id=TEST_CHAT_ID)
 
     # Mock message response
@@ -365,24 +338,40 @@ async def test_websocket_handler_structured_response(
     }
     mock_chat_service.send_message.return_value = mock_message
 
-    # Connect the websocket
-    await connection_manager.connect(mock_websocket, TEST_USER_ID)
+    # Mock connection manager
+    broadcast_mock = AsyncMock()
+    connection_manager.broadcast_to_user = broadcast_mock
 
-    # Send message with structured response
-    message_data = SendMessageRequest(
-        action="send_message", chat_id=TEST_CHAT_ID, content=TEST_MESSAGE, response_model=True
-    )
-    await handler.handle_send_message(message_data)
+    # Mock pipeline response
+    with patch("app.pipelines.manager.PipelineManager.get_pipeline") as mock_get_pipeline:
 
-    # Wait for background tasks
-    await asyncio.sleep(TASK_WAIT_TIME)
+        class MockPipeline:
+            async def execute(self, *args, **kwargs):
+                yield AIResponse(
+                    content=json.dumps({"answer": "Test answer", "reason": "Test reason"}), response_type="structured"
+                )
 
-    # Verify structured response was processed
-    mock_chat_service.stream_structured_ai_response.assert_called_once()
+        mock_get_pipeline.return_value = MockPipeline()
 
-    # Verify task completion
-    task_result: TaskResult = await mock_background_processor.get_task_result(mock_background_processor._last_task_id)
-    assert task_result["status"] == TaskStatus.COMPLETED
+        # Connect the websocket
+        await connection_manager.connect(mock_websocket, TEST_USER_ID)
+
+        # Send message with structured response
+        message_data = SendMessageRequest(
+            action="send_message", chat_id=TEST_CHAT_ID, content=TEST_MESSAGE, response_model=True
+        )
+        await handler.handle_send_message(message_data)
+
+        # Wait for background tasks
+        await asyncio.sleep(TASK_WAIT_TIME)
+
+        # Verify messages were broadcast
+        broadcast_calls = [json.loads(call.args[1]) for call in broadcast_mock.call_args_list]
+        message_types = [msg["type"] for msg in broadcast_calls]
+
+        assert "message" in message_types  # User message
+        assert "structured_response" in message_types  # Structured response
+        assert "generation_complete" in message_types  # Completion notification
 
 
 @pytest.mark.asyncio

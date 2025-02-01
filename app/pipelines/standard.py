@@ -1,34 +1,27 @@
 from typing import AsyncGenerator, Optional, Sequence
 
-from app.adapters.ai_adapter import ChatMessage, OpenAIAdapter
+from app.adapters.ai_adapter import ChatMessage
 from app.pipelines.base import AIResponse, BasePipeline
+from app.services.ai_service import AIService
 
 
 class StandardPipeline(BasePipeline):
-    """Pipeline for standard chat interactions with streaming responses"""
+    """Standard pipeline that streams responses directly"""
 
-    def __init__(self):
-        super().__init__(name="standard")
-        self.ai_adapter = OpenAIAdapter()
-        self.history: list[ChatMessage] = []
+    def __init__(self, ai_service: AIService):
+        super().__init__(ai_service)
 
     def execute(
-        self, message: str, history: Optional[Sequence[ChatMessage]] = None
+        self,
+        message: str,
+        history: Optional[Sequence[ChatMessage]] = None,
     ) -> AsyncGenerator[AIResponse, None]:
-        """Execute standard chat pipeline with streaming response"""
-        if history:
-            self.history = list(history)
+        """Execute the pipeline on a message"""
 
         async def generate():
-            async for token in self.ai_adapter.stream_response(message, history=self.history):
+            # Convert sequence to list for AI service
+            history_list = list(history) if history is not None else None
+            async for token in self.ai_service.stream_chat_response(message, history=history_list):
                 yield AIResponse(content=token, response_type="stream")
-
-            # Update history with user message and final response
-            self.history.extend(
-                [
-                    {"role": "user", "content": message},
-                    {"role": "assistant", "content": token},  # Last token from stream
-                ]
-            )
 
         return generate()

@@ -1,8 +1,10 @@
+from abc import ABC, abstractmethod
 from typing import AsyncGenerator, Optional, Sequence
 
 from pydantic import BaseModel
 
 from app.adapters.ai_adapter import ChatMessage
+from app.services.ai_service import AIService
 
 
 class AIResponse(BaseModel):
@@ -13,17 +15,24 @@ class AIResponse(BaseModel):
     model_output: Optional[BaseModel] = None
 
 
-class BasePipeline:
+class BasePipeline(ABC):
     """Base class for all AI pipelines"""
 
-    def __init__(self, name: Optional[str] = None):
-        self.name = name or self.__class__.__name__
+    def __init__(self, ai_service: AIService):
+        self.ai_service = ai_service
 
+    @abstractmethod
     def execute(
-        self, message: str, history: Optional[Sequence[ChatMessage]] = None
+        self,
+        message: str,
+        history: Optional[Sequence[ChatMessage]] = None,
     ) -> AsyncGenerator[AIResponse, None]:
-        """Execute the pipeline on the input message"""
-        raise NotImplementedError("Pipeline must implement execute method")
+        """Execute the pipeline on a message"""
+
+        async def generate():
+            yield AIResponse(content="Not implemented", response_type="stream")
+
+        return generate()
 
     async def _stream_response(self, response: AsyncGenerator[str, None]) -> AsyncGenerator[AIResponse, None]:
         """Helper to convert token stream to AIResponse stream"""

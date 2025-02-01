@@ -3,10 +3,7 @@ from datetime import datetime, timezone
 from typing import (
     AsyncGenerator,
     List,
-    Literal,
     Optional,
-    Sequence,
-    TypedDict,
     TypeVar,
 )
 
@@ -15,20 +12,15 @@ from redis_data_structures import LRUCache, Queue
 from sqlalchemy import func, update
 from sqlalchemy.orm import Session
 
-from app.adapters.ai_adapter import OpenAIAdapter
+from app.adapters.ai_adapter import ChatMessage
 from app.config.redis_config import redis_manager
 from app.db.models import ChatDB, MessageDB, UserDB
 from app.schemas.chat import Chat, Message, MessageCreate
+from app.services.ai_service import AIService
 
 T = TypeVar("T", bound=BaseModel)
 
-
 logger = logging.getLogger(__name__)
-
-
-class ChatMessage(TypedDict):
-    role: Literal["user", "assistant", "system"]
-    content: str
 
 
 # Mock Structred response type
@@ -40,9 +32,9 @@ class StructuredResponse(BaseModel):
 
 
 class ChatService:
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, ai_service: Optional[AIService] = None):
         self.db = db
-        self.adapter = OpenAIAdapter()
+        self.ai_service = ai_service or AIService()
         self.chat_cache = LRUCache("chat_history", capacity=1000, connection_manager=redis_manager)
         self.message_queue = Queue("chat_messages", connection_manager=redis_manager)
 
@@ -87,7 +79,8 @@ class ChatService:
         db_chats = self.db.query(ChatDB).filter(ChatDB.user_id == user_id).all()
         return [Chat.model_validate(chat) for chat in db_chats]
 
-    async def _get_chat_history(self, chat_id: int) -> Sequence[ChatMessage]:
+    async def get_chat_history(self, chat_id: int) -> List[ChatMessage]:
+        """Get chat history in a format suitable for AI context"""
         messages = self.db.query(MessageDB).filter(MessageDB.chat_id == chat_id).all()
         return [{"role": "assistant" if msg.is_ai else "user", "content": msg.content} for msg in messages]
 
@@ -129,6 +122,7 @@ class ChatService:
         self,
         chat_id: int,
         user_message: str,
+        task_id: str,
     ) -> AsyncGenerator[str, None]:
         logger.info("Starting AI response stream for chat %s", chat_id)
 
@@ -138,7 +132,7 @@ class ChatService:
             raise ValueError("Chat not found")
 
         # Get history
-        history = await self._get_chat_history(chat_id)
+        history = await self.get_chat_history(chat_id)
         logger.debug("Got chat history with %d messages", len(history))
 
         # Create empty AI message in DB, this will be updated when the response is streamed
@@ -147,20 +141,18 @@ class ChatService:
             content="",
             is_ai=True,
             timestamp=datetime.now(timezone.utc),
+            task_id=task_id,  # Save the task_id with the message
         )
         self.db.add(db_message)
         self.db.commit()
         self.db.refresh(db_message)
-        logger.info("Created initial AI message with ID %s", db_message.id)
+        logger.info("Created initial AI message with ID %s and task_id %s", db_message.id, task_id)
 
         complete_response = ""
         try:
             logger.info("Starting to stream AI response")
-            async for token in self.adapter.stream_response(user_message, history=history):
+            async for token in self.ai_service.stream_chat_response(user_message, history=history):
                 logger.debug("Received token: %s", token)
-                if not isinstance(token, str):
-                    logger.error("Received non-string token: %s, value: %s", type(token), token)
-                    continue
                 complete_response += token
                 yield token
 
@@ -189,25 +181,28 @@ class ChatService:
         self,
         chat_id: int,
         user_message: str,
+        task_id: str,
     ) -> AsyncGenerator[BaseModel, None]:
         chat = await self.get_chat(chat_id)
         if not chat:
             raise ValueError("Chat not found")
 
-        history = await self._get_chat_history(chat_id)
+        history = await self.get_chat_history(chat_id)
 
         db_message = MessageDB(
             chat_id=chat_id,
             content="",
             is_ai=True,
             timestamp=datetime.now(timezone.utc),
+            task_id=task_id,
         )
         self.db.add(db_message)
         self.db.commit()
         self.db.refresh(db_message)
+        logger.info("Created initial structured AI message with ID %s and task_id %s", db_message.id, task_id)
 
         try:
-            async for response in self.adapter.stream_structured_response(
+            async for response in self.ai_service.stream_structured_response(
                 user_message,
                 StructuredResponse,
                 history=history,
