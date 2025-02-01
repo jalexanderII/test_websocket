@@ -1,15 +1,14 @@
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 from pydantic import BaseModel, EmailStr, Field
 
 
 class User(BaseModel):
-    id: Optional[int] = None
+    id: int | None = None
     username: str
     email: EmailStr
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     is_active: bool = True
 
 

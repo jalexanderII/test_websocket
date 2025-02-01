@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -143,7 +143,7 @@ async def test_cleanup_old_tasks(task_processor):
     await task_processor.cancel_task(task_id2)
 
     # Modify completion time to be old
-    old_time = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    old_time = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
     for task_id in [task_id1, task_id2]:
         if task_data := task_processor._task_results.get(task_id):
             task_data["completed_at"] = old_time  # type: ignore
@@ -168,7 +168,7 @@ async def test_concurrent_tasks(task_processor):
 
     # Start multiple tasks
     task_ids = []
-    for i in range(4):  # More than max_workers (2)
+    for _ in range(4):  # More than max_workers (2)
         task_id = await task_processor.add_task(slow_task, 0.1)
         task_ids.append(task_id)
         await task_processor._execute_async_task(task_id, slow_task, 0.1)

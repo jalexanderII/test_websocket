@@ -2,9 +2,9 @@ import asyncio
 import inspect
 import json
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from functools import partial
-from typing import Any, Callable, Optional, TypedDict, cast
+from typing import Any, Callable, TypedDict, cast
 
 from redis_data_structures import Dict as RedisDict
 
@@ -65,7 +65,7 @@ class BackgroundTaskProcessor:
             return result.model_dump()
         return json.loads(safe_json_dumps(result, default=_serialize_datetime))
 
-    async def add_task(self, func: Callable, *args, task_id: Optional[str] = None, **kwargs) -> str:
+    async def add_task(self, func: Callable, *args, task_id: str | None = None, **kwargs) -> str:
         """
         Add a task to be executed in the background
 
@@ -83,8 +83,8 @@ class BackgroundTaskProcessor:
         # Store initial task metadata
         self._task_results[task_id] = {
             "status": TaskStatus.PENDING,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
+            "updated_at": datetime.now(UTC).isoformat(),
             "result": None,
             "error": None,
         }
@@ -130,7 +130,7 @@ class BackgroundTaskProcessor:
         """Update the status of a task"""
         if task_data := self._task_results.get(task_id):
             task_data["status"] = status
-            task_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+            task_data["updated_at"] = datetime.now(UTC).isoformat()
             self._task_results[task_id] = task_data
 
     def _store_task_result(self, task_id: str, result: Any) -> None:
@@ -140,8 +140,8 @@ class BackgroundTaskProcessor:
                 {
                     "status": TaskStatus.COMPLETED,
                     "result": self._serialize_result(result),
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                    "updated_at": datetime.now(UTC).isoformat(),
+                    "completed_at": datetime.now(UTC).isoformat(),
                 }
             )
             self._task_results[task_id] = task_data
@@ -153,13 +153,13 @@ class BackgroundTaskProcessor:
                 {
                     "status": TaskStatus.FAILED,
                     "error": error,
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                    "updated_at": datetime.now(UTC).isoformat(),
+                    "completed_at": datetime.now(UTC).isoformat(),
                 }
             )
             self._task_results[task_id] = task_data
 
-    async def get_task_result(self, task_id: str) -> Optional[TaskData]:
+    async def get_task_result(self, task_id: str) -> TaskData | None:
         """Get the current status and result of a task"""
         if result := self._task_results.get(task_id):
             return cast(TaskData, result)
@@ -175,15 +175,15 @@ class BackgroundTaskProcessor:
                 task_data.update(
                     {
                         "status": TaskStatus.CANCELLED,
-                        "updated_at": datetime.now(timezone.utc).isoformat(),
-                        "completed_at": datetime.now(timezone.utc).isoformat(),
+                        "updated_at": datetime.now(UTC).isoformat(),
+                        "completed_at": datetime.now(UTC).isoformat(),
                     }
                 )
                 self._task_results[task_id] = task_data
                 return True
         return False
 
-    async def cleanup_old_tasks(self, max_age: Optional[timedelta] = None) -> int:
+    async def cleanup_old_tasks(self, max_age: timedelta | None = None) -> int:
         """
         Clean up completed/failed tasks older than max_age
         Returns number of tasks cleaned up
@@ -200,7 +200,7 @@ class BackgroundTaskProcessor:
                 completed_dt = datetime.fromisoformat(completed_at)
                 if (
                     task_data["status"] in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]
-                    and datetime.now(timezone.utc) - completed_dt > max_age
+                    and datetime.now(UTC) - completed_dt > max_age
                 ):
                     del self._task_results[task_id]
                     cleaned += 1
