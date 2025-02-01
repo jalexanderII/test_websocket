@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from app.api.handlers.connection_manager import ConnectionManager
 from app.api.handlers.websocket_handler import WebSocketHandler
+from app.config.utils.universal_serializer import safe_json_dumps
 from app.pipelines.base import AIResponse
 from app.schemas.chat import Chat
 from app.schemas.websocket import CreateChatMessage, SendMessageRequest
@@ -348,7 +349,8 @@ async def test_websocket_handler_structured_response(
         class MockPipeline:
             async def execute(self, *args, **kwargs):
                 yield AIResponse(
-                    content=json.dumps({"answer": "Test answer", "reason": "Test reason"}), response_type="structured"
+                    content=safe_json_dumps({"answer": "Test answer", "reason": "Test reason"}),
+                    response_type="structured",
                 )
 
         mock_get_pipeline.return_value = MockPipeline()

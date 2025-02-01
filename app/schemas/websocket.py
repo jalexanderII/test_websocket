@@ -16,6 +16,7 @@ class CreateChatMessage(WebSocketMessage):
     user_id: int
     initial_message: Optional[str] = None
     response_model: bool = False
+    pipeline_type: Optional[str] = None
 
 
 class SendMessageRequest(WebSocketMessage):

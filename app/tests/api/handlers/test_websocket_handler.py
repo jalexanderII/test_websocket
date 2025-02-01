@@ -8,6 +8,7 @@ from fastapi import WebSocket
 from app.adapters.ai_adapter import ChatMessage
 from app.api.handlers.connection_manager import ConnectionManager
 from app.api.handlers.websocket_handler import WebSocketHandler
+from app.config.utils.universal_serializer import safe_json_dumps
 from app.pipelines.base import AIResponse
 from app.schemas.websocket import SendMessageRequest
 from app.services.background_task_processor import TaskStatus
@@ -81,7 +82,7 @@ class MockPipeline:
         yield AIResponse(content="Response", response_type="stream")
 
         # Step 2: Send structured data
-        yield AIResponse(content=json.dumps({"step": "planning", "details": "test"}), response_type="structured")
+        yield AIResponse(content=safe_json_dumps({"step": "planning", "details": "test"}), response_type="structured")
 
         # Step 3: Final stream
         yield AIResponse(content="Final response", response_type="stream")
@@ -183,5 +184,5 @@ async def test_error_handling(handler, mock_connection_manager, mock_chat_servic
         # Verify error was broadcast
         mock_connection_manager.broadcast_to_user.assert_called_with(
             handler.user_id,
-            json.dumps({"type": "error", "message": "Test error"}),
+            safe_json_dumps({"type": "error", "message": "Test error"}),
         )

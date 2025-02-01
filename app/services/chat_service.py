@@ -1,4 +1,3 @@
-import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -9,7 +8,6 @@ from typing import (
     TypeVar,
 )
 
-from pipelines.base import AIResponse
 from pydantic import BaseModel
 from redis_data_structures import LRUCache, Queue
 from sqlalchemy import func, update
@@ -17,7 +15,9 @@ from sqlalchemy.orm import Session
 
 from app.adapters.ai_adapter import ChatMessage
 from app.config.redis_config import redis_manager
+from app.config.utils.universal_serializer import safe_json_dumps
 from app.db.models import ChatDB, MessageDB, UserDB
+from app.pipelines.base import AIResponse
 from app.schemas.chat import Chat, Message, MessageCreate
 from app.services.ai_service import AIService
 
@@ -213,7 +213,7 @@ class ChatService:
                 history=history,
             ):
                 response = AIResponse(
-                    content=json.dumps(stream_struc),
+                    content=safe_json_dumps(stream_struc),
                     response_type="structured",
                     metadata={"structured_id": structured_id},
                 )

@@ -437,7 +437,9 @@ export default function ChatPage() {
         sendWebSocketMessage(JSON.stringify({ 
           action: 'create_chat',
           user_id: Number(userId),
-          initial_message: initialMessage
+          initial_message: initialMessage,
+          // TODO: Remove
+          pipeline_type: 'planning'
         }));
       }
     } else if (chatId) {
@@ -466,6 +468,7 @@ export default function ChatPage() {
         action: 'send_message',
         chat_id: currentChatId,
         content: inputMessage,
+        // TODO: Remove
         pipeline_type: 'planning'
       };
       console.log('[WebSocket] Message object:', messageObj);

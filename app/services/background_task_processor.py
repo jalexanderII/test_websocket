@@ -9,6 +9,7 @@ from typing import Any, Callable, Optional, TypedDict, cast
 from redis_data_structures import Dict as RedisDict
 
 from app.config.redis_config import redis_manager
+from app.config.utils.universal_serializer import safe_json_dumps
 
 
 class TaskData(TypedDict):
@@ -62,7 +63,7 @@ class BackgroundTaskProcessor:
         """Serialize result for storage, handling special types like datetime"""
         if hasattr(result, "model_dump"):
             return result.model_dump()
-        return json.loads(json.dumps(result, default=_serialize_datetime))
+        return json.loads(safe_json_dumps(result, default=_serialize_datetime))
 
     async def add_task(self, func: Callable, *args, task_id: Optional[str] = None, **kwargs) -> str:
         """

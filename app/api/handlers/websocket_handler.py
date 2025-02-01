@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from app.adapters.ai_adapter import ChatMessage
 from app.api.handlers.connection_manager import ConnectionManager
+from app.config.utils.universal_serializer import safe_json_dumps
 from app.pipelines.manager import PipelineManager
 from app.schemas.chat import Message, MessageCreate
 from app.schemas.websocket import CreateChatMessage, JoinChatMessage, SendMessageRequest
@@ -135,7 +136,7 @@ class WebSocketHandler:
                     complete_response += response.content
                     await self.manager.broadcast_to_user(
                         self.user_id,
-                        json.dumps(
+                        safe_json_dumps(
                             {
                                 "type": "token",
                                 "content": response.content,
@@ -149,7 +150,7 @@ class WebSocketHandler:
                     complete_response = response.content
                     await self.manager.broadcast_to_user(
                         self.user_id,
-                        json.dumps(
+                        safe_json_dumps(
                             {
                                 "type": "structured_response",
                                 "content": response.content,
@@ -172,7 +173,7 @@ class WebSocketHandler:
             # Send completion notification
             await self.manager.broadcast_to_user(
                 self.user_id,
-                json.dumps(
+                safe_json_dumps(
                     {
                         "type": "generation_complete",
                         "task_id": task_id,
@@ -189,67 +190,66 @@ class WebSocketHandler:
     async def handle_create_chat(self, message: CreateChatMessage):
         try:
             # Create chat in background
-            task_id = await background_processor.add_task(self.chat_service.create_chat, message.user_id)
+            create_task_id = await background_processor.add_task(self.chat_service.create_chat, message.user_id)
+            await self._monitor_task(create_task_id)
 
-            # Wait for task completion with timeout
-            max_retries = 10
-            retry_count = 0
-            while retry_count < max_retries:
-                task_data = await background_processor.get_task_result(task_id)
-                if not task_data:
-                    await asyncio.sleep(0.1)
-                    retry_count += 1
-                    continue
+            # Get the created chat result
+            task_data = await background_processor.get_task_result(create_task_id)
+            if not task_data:
+                raise Exception("Failed to get chat creation result")
 
-                status = task_data.get("status")
-                if status == TaskStatus.COMPLETED:
-                    result = task_data.get("result")
-                    if not isinstance(result, dict):
-                        raise Exception("Invalid chat result")
+            result = task_data.get("result")
+            if not isinstance(result, dict):
+                raise Exception("Invalid chat result")
 
-                    chat_id = result.get("id")
-                    if not chat_id:
-                        raise Exception("Chat result missing ID")
+            chat_id = result.get("id")
+            if not chat_id:
+                raise Exception("Chat result missing ID")
 
-                    logger.info("Chat created successfully with id: %s", chat_id)
+            logger.info("Chat created successfully with id: %s", chat_id)
 
-                    # Send chat_created event
-                    await self.manager.broadcast_to_user(
-                        self.user_id,
-                        json.dumps(
-                            {
-                                "type": "chat_created",
-                                "chat_id": chat_id,
-                                "message": message.initial_message if message.initial_message else None,
-                            }
-                        ),
+            # Send chat_created event
+            await self.manager.broadcast_to_user(
+                self.user_id,
+                safe_json_dumps(
+                    {
+                        "type": "chat_created",
+                        "chat_id": chat_id,
+                        "message": message.initial_message if message.initial_message else None,
+                    }
+                ),
+            )
+
+            # If there's an initial message, send it and get AI response
+            if message.initial_message:
+                # Send initial message
+                message_task_id = await background_processor.add_task(
+                    self._handle_initial_message, chat_id, message.initial_message or ""
+                )
+                await self._monitor_task(message_task_id)
+
+                # Get chat history for context
+                history = await self.chat_service.get_chat_history(chat_id)
+                logger.info("[WebSocket] Retrieved chat history, starting pipeline processing")
+
+                # Start pipeline processing in background
+                pipeline_type = message.pipeline_type if message.pipeline_type else "standard"
+                logger.info("[WebSocket] Starting pipeline processing with type: %s", pipeline_type)
+
+                pipeline_task_id = str(uuid.uuid4())
+
+                # Start pipeline processing in background with standard type
+                async def process_pipeline_wrapper():
+                    return await self._process_pipeline_message(
+                        message=message.initial_message or "",
+                        pipeline_type=pipeline_type,
+                        history=history,
+                        chat_id=chat_id,
+                        task_id=pipeline_task_id,
                     )
 
-                    # If there's an initial message, send it and get AI response
-                    if message.initial_message:
-                        # Send initial message
-                        message_task_id = await background_processor.add_task(
-                            self._handle_initial_message, chat_id, message.initial_message
-                        )
-                        await self._monitor_task(message_task_id)
-
-                        # Generate AI response
-                        ai_task_id = await background_processor.add_task(
-                            self._generate_standard_response,
-                            chat_id=chat_id,
-                            user_message=message.initial_message,
-                        )
-                        await self._monitor_task(ai_task_id)
-                    return
-
-                elif status in [TaskStatus.FAILED, TaskStatus.CANCELLED]:
-                    error = task_data.get("error", "Unknown error")
-                    raise Exception(f"Failed to create chat: {error}")
-
-                await asyncio.sleep(0.1)
-                retry_count += 1
-
-            raise Exception("Timeout waiting for chat creation")
+                ai_task_id = await background_processor.add_task(process_pipeline_wrapper)
+                await self._monitor_task(ai_task_id)
 
         except Exception as e:
             logger.exception("Error creating chat")
@@ -296,7 +296,7 @@ class WebSocketHandler:
                     logger.info("[WebSocket] Successfully joined chat: %s", message.chat_id)
                     await self.manager.broadcast_to_user(
                         self.user_id,
-                        json.dumps(
+                        safe_json_dumps(
                             {
                                 "type": "chat_joined",
                                 "chat_id": message.chat_id,
@@ -326,7 +326,7 @@ class WebSocketHandler:
             message_data = message.model_dump(mode="json") if hasattr(message, "model_dump") else message
             await self.manager.broadcast_to_user(
                 self.user_id,
-                json.dumps({"type": "message", "message": message_data}),
+                safe_json_dumps({"type": "message", "message": message_data}),
             )
         except Exception:
             logger.exception("Error broadcasting user message")
@@ -337,7 +337,7 @@ class WebSocketHandler:
         try:
             await self.manager.broadcast_to_user(
                 self.user_id,
-                json.dumps({"type": "error", "message": error}),
+                safe_json_dumps({"type": "error", "message": error}),
             )
         except Exception:
             logger.exception("Error sending error message")
@@ -364,13 +364,11 @@ class WebSocketHandler:
 
                 if status == TaskStatus.COMPLETED:
                     # Task completed successfully
-                    result = task_data.get("result", {})
                     # Ensure result is JSON serializable
-                    if result and hasattr(result, "model_dump"):
-                        result = result.model_dump(mode="json")
+                    result = safe_json_dumps(task_data.get("result", {}))
                     await self.manager.broadcast_to_user(
                         self.user_id,
-                        json.dumps(
+                        safe_json_dumps(
                             {
                                 "type": "task_completed",
                                 "task_id": task_id,
@@ -384,7 +382,7 @@ class WebSocketHandler:
                     error = task_data.get("error", "Unknown error")
                     await self.manager.broadcast_to_user(
                         self.user_id,
-                        json.dumps(
+                        safe_json_dumps(
                             {
                                 "type": "task_failed",
                                 "task_id": task_id,
@@ -397,7 +395,7 @@ class WebSocketHandler:
                     # Task was cancelled
                     await self.manager.broadcast_to_user(
                         self.user_id,
-                        json.dumps(
+                        safe_json_dumps(
                             {
                                 "type": "task_cancelled",
                                 "task_id": task_id,
@@ -425,7 +423,7 @@ class WebSocketHandler:
                 # Send progress update
                 await self.manager.broadcast_to_user(
                     self.user_id,
-                    json.dumps(
+                    safe_json_dumps(
                         {
                             "type": "structured_response",
                             "content": response.model_dump() if hasattr(response, "model_dump") else response,
@@ -463,7 +461,7 @@ class WebSocketHandler:
                 # Send progress update
                 await self.manager.broadcast_to_user(
                     self.user_id,
-                    json.dumps(
+                    safe_json_dumps(
                         {
                             "type": "token",
                             "content": token,

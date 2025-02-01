@@ -1,4 +1,3 @@
-import json
 import logging
 import uuid
 from typing import AsyncGenerator, List, Optional, Sequence
@@ -6,6 +5,7 @@ from typing import AsyncGenerator, List, Optional, Sequence
 from pydantic import BaseModel
 
 from app.adapters.ai_adapter import ChatMessage
+from app.config.utils.universal_serializer import safe_json_dumps
 from app.pipelines.base import AIResponse, BasePipeline
 from app.services.ai_service import AIService
 
@@ -52,7 +52,7 @@ class PlanningPipeline(BasePipeline):
                 logger.info("Received plan: %s", plan)
                 last_plan = plan
                 response = AIResponse(
-                    content=json.dumps(plan),
+                    content=safe_json_dumps(plan),
                     response_type="structured",
                     metadata={"structured_id": structured_id},
                 )
