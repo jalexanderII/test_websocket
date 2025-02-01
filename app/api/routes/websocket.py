@@ -1,15 +1,13 @@
-import logging
-
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
 
 from app.api.handlers.websocket.connection_manager import ConnectionManager
 from app.api.handlers.websocket.websocket_handler import WebSocketHandler
 from app.config.database import get_db
+from app.config.logger import get_logger
 from app.services.chat.service import ChatService
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 ws_router = APIRouter()

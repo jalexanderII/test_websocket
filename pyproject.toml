@@ -23,6 +23,7 @@ dependencies = [
     "redis-data-structures[orjson]>=0.1.24",
     "pytest-cov>=6.0.0",
     "pre-commit>=4.1.0",
+    "ujson>=5.10.0",
 ]
 
 [tool.pytest]
@@ -59,7 +60,7 @@ exclude = [
     "sandbox",
 ]
 src = ["."]
-target-version = "py39"
+target-version = "py311"
 line-length = 120
 indent-width = 4
 fix = true

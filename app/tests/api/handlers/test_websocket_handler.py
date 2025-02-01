@@ -1,5 +1,5 @@
 import json
-from typing import AsyncGenerator, Optional, Sequence
+from typing import AsyncGenerator, Sequence
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -74,7 +74,7 @@ def handler(mock_websocket, mock_chat_service, mock_connection_manager):
 
 class MockPipeline:
     async def execute(
-        self, message: str, history: Optional[Sequence[ChatMessage]] = None
+        self, message: str, history: Sequence[ChatMessage] | None = None
     ) -> AsyncGenerator[AIResponse, None]:
         # Simulate a multi-step pipeline
         # Step 1: Stream some tokens
@@ -92,8 +92,8 @@ class MockPipeline:
 async def test_handle_send_message(handler, mock_connection_manager, mock_chat_service, mock_background_processor):
     # Mock the pipeline and background processor
     with (
-        patch("app.pipelines.manager.PipelineManager.get_pipeline") as mock_get_pipeline,
-        patch("app.api.handlers.websocket_handler.background_processor", mock_background_processor),
+        patch("app.services.ai.pipelines.manager.PipelineManager.get_pipeline") as mock_get_pipeline,
+        patch("app.api.handlers.websocket.websocket_handler.background_processor", mock_background_processor),
     ):
         mock_get_pipeline.return_value = MockPipeline()
 
@@ -138,7 +138,7 @@ async def test_handle_send_message(handler, mock_connection_manager, mock_chat_s
 
 @pytest.mark.asyncio
 async def test_handle_send_message_chat_not_found(handler, mock_background_processor):
-    with patch("app.api.handlers.websocket_handler.background_processor", mock_background_processor):
+    with patch("app.api.handlers.websocket.websocket_handler.background_processor", mock_background_processor):
         # Mock chat service to return None for chat
         async def mock_get_chat(*args, **kwargs):
             return None
@@ -161,8 +161,8 @@ async def test_handle_send_message_chat_not_found(handler, mock_background_proce
 async def test_error_handling(handler, mock_connection_manager, mock_chat_service, mock_background_processor):
     # Mock the pipeline and background processor
     with (
-        patch("app.pipelines.manager.PipelineManager.get_pipeline") as mock_get_pipeline,
-        patch("app.api.handlers.websocket_handler.background_processor", mock_background_processor),
+        patch("app.services.ai.pipelines.manager.PipelineManager.get_pipeline") as mock_get_pipeline,
+        patch("app.api.handlers.websocket.websocket_handler.background_processor", mock_background_processor),
     ):
         # Configure pipeline to raise an error
         class ErrorPipeline:

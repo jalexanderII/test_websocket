@@ -1,15 +1,26 @@
+from typing import cast
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import UJSONResponse
 
 from app.api.routes.chat import chat_router
 from app.api.routes.websocket import ws_router
 from app.config.database import Base, engine
-from app.config.settings import HOST, PORT
+from app.config.settings import settings
 
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Websocket Chat")
-
+app = FastAPI(
+    debug=cast(bool, settings.fastapi_kwargs["debug"]),
+    docs_url=cast(str | None, settings.fastapi_kwargs["docs_url"]),
+    openapi_prefix=cast(str, settings.fastapi_kwargs["openapi_prefix"]),
+    openapi_url=cast(str | None, settings.fastapi_kwargs["openapi_url"]),
+    redoc_url=cast(str | None, settings.fastapi_kwargs["redoc_url"]),
+    title=cast(str, settings.fastapi_kwargs["title"]),
+    version=cast(str, settings.fastapi_kwargs["version"]),
+    default_response_class=UJSONResponse,
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -32,4 +43,4 @@ async def root():
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host=HOST, port=PORT)
+    uvicorn.run(app, host=settings.HOST, port=settings.PORT)

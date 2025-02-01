@@ -1,10 +1,8 @@
-import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import (
     AsyncGenerator,
     List,
-    Optional,
     TypeVar,
 )
 
@@ -13,6 +11,7 @@ from redis_data_structures import LRUCache, Queue
 from sqlalchemy import func, update
 from sqlalchemy.orm import Session
 
+from app.config.logger import get_logger
 from app.config.redis import redis_manager
 from app.db.models import ChatDB, MessageDB, UserDB
 from app.schemas.chat import Chat, Message, MessageCreate
@@ -21,9 +20,9 @@ from app.services.ai.pipelines.base import AIResponse
 from app.services.ai.service import AIService
 from app.utils.universal_serializer import safe_json_dumps
 
-T = TypeVar("T", bound=BaseModel)
+logger = get_logger(__name__)
 
-logger = logging.getLogger(__name__)
+T = TypeVar("T", bound=BaseModel)
 
 
 # Mock Structred response type
@@ -35,7 +34,7 @@ class StructuredResponse(BaseModel):
 
 
 class ChatService:
-    def __init__(self, db: Session, ai_service: Optional[AIService] = None):
+    def __init__(self, db: Session, ai_service: AIService | None = None):
         self.db = db
         self.ai_service = ai_service or AIService()
         self.chat_cache = LRUCache("chat_history", capacity=1000, connection_manager=redis_manager)
@@ -64,7 +63,7 @@ class ChatService:
         logger.info("Chat created in database with id: %s", db_chat.id)
         return Chat.model_validate(db_chat)
 
-    async def get_chat(self, chat_id: int) -> Optional[Chat]:
+    async def get_chat(self, chat_id: int) -> Chat | None:
         cached_chat = self.chat_cache.get(str(chat_id))
         if cached_chat:
             return Chat.model_validate(cached_chat)
@@ -97,7 +96,7 @@ class ChatService:
             chat_id=message.chat_id,
             content=message.content,
             is_ai=message.is_ai,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         )
         logger.debug("Creating message: %s", db_message)
 
@@ -143,7 +142,7 @@ class ChatService:
             chat_id=chat_id,
             content="",
             is_ai=True,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             task_id=task_id,  # Save the task_id with the message
         )
         self.db.add(db_message)
@@ -196,7 +195,7 @@ class ChatService:
             chat_id=chat_id,
             content="",
             is_ai=True,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             task_id=task_id,
         )
         self.db.add(db_message)

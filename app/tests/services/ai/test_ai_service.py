@@ -1,4 +1,4 @@
-from typing import AsyncGenerator, List, Optional
+from typing import AsyncGenerator, List
 from unittest.mock import AsyncMock
 
 import pytest
@@ -15,14 +15,14 @@ class MockResponse(BaseModel):
     details: str
 
 
-async def mock_stream_response(message: str, history: Optional[List[ChatMessage]] = None) -> AsyncGenerator[str, None]:
+async def mock_stream_response(message: str, history: List[ChatMessage] | None = None) -> AsyncGenerator[str, None]:
     tokens = ["Hello", " World", "!"]
     for token in tokens:
         yield token
 
 
 async def mock_structured_stream(
-    message: str, model: type[BaseModel], history: Optional[List[ChatMessage]] = None
+    message: str, model: type[BaseModel], history: List[ChatMessage] | None = None
 ) -> AsyncGenerator[MockResponse, None]:
     responses = [
         MockResponse(answer="First", details="Details 1"),
@@ -32,7 +32,7 @@ async def mock_structured_stream(
         yield response
 
 
-async def error_stream(message: str, history: Optional[List[ChatMessage]] = None) -> AsyncGenerator[str, None]:
+async def error_stream(message: str, history: List[ChatMessage] | None = None) -> AsyncGenerator[str, None]:
     if True:  # Always raise error
         raise Exception("Test error")
     yield ""  # Never reached, but needed for type checking
@@ -95,8 +95,5 @@ async def test_error_handling(ai_service, mock_adapter):
     # Test error handling
     ai_service.adapter.stream_response = error_stream
 
-    with pytest.raises(Exception) as exc_info:
-        async for _ in ai_service.stream_chat_response("test"):
-            pass
-
-    assert str(exc_info.value) == "Test error"
+    with pytest.raises(Exception, match="Test error"):
+        await ai_service.stream_chat_response("test").__anext__()

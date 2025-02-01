@@ -1,15 +1,15 @@
-import logging
 import uuid
-from typing import AsyncGenerator, List, Optional, Sequence
+from typing import AsyncGenerator, List, Sequence
 
 from pydantic import BaseModel
 
+from app.config.logger import get_logger
 from app.services.ai.adapter import ChatMessage
 from app.services.ai.pipelines.base import AIResponse, BasePipeline
 from app.services.ai.service import AIService
 from app.utils.universal_serializer import safe_json_dumps
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class PlanDetails(BaseModel):
@@ -28,7 +28,7 @@ class PlanningPipeline(BasePipeline):
     def execute(
         self,
         message: str,
-        history: Optional[Sequence[ChatMessage]] = None,
+        history: Sequence[ChatMessage] | None = None,
     ) -> AsyncGenerator[AIResponse, None]:
         """Execute the pipeline on a message"""
 

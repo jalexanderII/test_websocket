@@ -1,24 +1,25 @@
-import logging
-from typing import AsyncGenerator, List, Optional, Type, TypeVar
+from typing import AsyncGenerator, List, Type, TypeVar
 
 from pydantic import BaseModel
 
+from app.config.logger import get_logger
 from app.services.ai.adapter import ChatMessage, OpenAIAdapter
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
+
 T = TypeVar("T", bound=BaseModel)
 
 
 class AIService:
     """Service for handling AI-related operations"""
 
-    def __init__(self, adapter: Optional[OpenAIAdapter] = None):
+    def __init__(self, adapter: OpenAIAdapter | None = None):
         self.adapter = adapter or OpenAIAdapter()
 
     async def stream_chat_response(
         self,
         message: str,
-        history: Optional[List[ChatMessage]] = None,
+        history: List[ChatMessage] | None = None,
     ) -> AsyncGenerator[str, None]:
         """Stream a chat response token by token"""
         logger.info("Starting chat response stream")
@@ -36,7 +37,7 @@ class AIService:
         self,
         message: str,
         response_model: Type[T],
-        history: Optional[List[ChatMessage]] = None,
+        history: List[ChatMessage] | None = None,
     ) -> AsyncGenerator[T, None]:
         """Stream a structured response using a Pydantic model"""
         logger.info("Starting structured response stream with model %s", response_model.__name__)
@@ -54,7 +55,7 @@ class AIService:
     async def get_completion(
         self,
         message: str,
-        history: Optional[List[ChatMessage]] = None,
+        history: List[ChatMessage] | None = None,
     ) -> str:
         """Get a single completion response"""
         logger.info("Getting completion response")

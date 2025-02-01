@@ -1,9 +1,7 @@
-import logging
 from typing import (
     AsyncGenerator,
     List,
     Literal,
-    Optional,
     Sequence,
     Type,
     TypedDict,
@@ -15,13 +13,13 @@ from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
 from pydantic import BaseModel
 
-from app.config.settings import MODEL_NAME, OPENAI_API_KEY
+from app.config.logger import get_logger
+from app.config.settings import settings
 from app.schemas.ai import AIModel
 
 T = TypeVar("T", bound=BaseModel)
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ChatMessage(TypedDict):
@@ -31,8 +29,8 @@ class ChatMessage(TypedDict):
 
 class OpenAIAdapter(AIModel):
     def __init__(self):
-        self.client = AsyncOpenAI(api_key=OPENAI_API_KEY)
-        self.model = MODEL_NAME
+        self.client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+        self.model = settings.MODEL_NAME
 
     def _convert_to_openai_messages(self, messages: Sequence[ChatMessage]) -> List[ChatCompletionMessageParam]:
         return [
@@ -44,7 +42,7 @@ class OpenAIAdapter(AIModel):
         ]
 
     async def stream_response(
-        self, prompt: str, history: Optional[Sequence[ChatMessage]] = None
+        self, prompt: str, history: Sequence[ChatMessage] | None = None
     ) -> AsyncGenerator[str, None]:
         try:
             messages = self._convert_to_openai_messages(history) if history else []
@@ -72,7 +70,7 @@ class OpenAIAdapter(AIModel):
         self,
         prompt: str,
         response_model: Type[T],
-        history: Optional[Sequence[ChatMessage]] = None,
+        history: Sequence[ChatMessage] | None = None,
     ) -> AsyncGenerator[T, None]:
         try:
             messages = self._convert_to_openai_messages(history) if history else []
@@ -95,7 +93,7 @@ class OpenAIAdapter(AIModel):
             logger.exception("Error in stream_structured_response: %s", e)
             raise
 
-    async def generate_response(self, prompt: str, history: Optional[Sequence[ChatMessage]] = None) -> str:
+    async def generate_response(self, prompt: str, history: Sequence[ChatMessage] | None = None) -> str:
         try:
             messages = self._convert_to_openai_messages(history) if history else []
             messages.append(

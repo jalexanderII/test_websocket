@@ -1,7 +1,7 @@
 import asyncio
 import json
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Literal, TypedDict
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -9,7 +9,6 @@ import pytest
 import pytest_asyncio
 from fastapi import WebSocket
 from fastapi.testclient import TestClient
-from utils.universal_serializer import safe_json_dumps
 
 from app.api.handlers.websocket.connection_manager import ConnectionManager
 from app.api.handlers.websocket.websocket_handler import WebSocketHandler
@@ -18,6 +17,7 @@ from app.schemas.websocket import CreateChatMessage, SendMessageRequest
 from app.services.ai.pipelines.base import AIResponse
 from app.services.chat.service import ChatService
 from app.services.core.background_task_processor import TaskStatus
+from app.utils.universal_serializer import safe_json_dumps
 
 # Test data
 TEST_USER_ID = 1
@@ -69,7 +69,7 @@ async def mock_websocket():
 @pytest_asyncio.fixture(autouse=True)
 async def mock_background_processor():
     """Mock background processor for testing"""
-    with patch("app.api.handlers.websocket_handler.background_processor") as mock:
+    with patch("app.api.handlers.websocket.websocket_handler.background_processor") as mock:
         # Mock add_task to execute the function immediately
         async def mock_add_task(func, *args, **kwargs):
             task_id = str(uuid.uuid4())
@@ -165,8 +165,8 @@ async def test_websocket_heartbeat(connection_manager, mock_websocket):
     assert connection_manager.is_connection_alive(mock_websocket)
 
     # Test with expired timeout
-    with patch("app.api.handlers.connection_manager.datetime") as mock_datetime:
-        mock_now = datetime.now(timezone.utc)
+    with patch("app.api.handlers.websocket.connection_manager.datetime") as mock_datetime:
+        mock_now = datetime.now(UTC)
         mock_datetime.now.return_value = mock_now + timedelta(minutes=10)
         assert not connection_manager.is_connection_alive(mock_websocket)
 
@@ -198,7 +198,7 @@ async def test_websocket_handler_send_message(
         "id": 1,
         "content": TEST_MESSAGE,
         "is_ai": False,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
     }
     print(f"\n[DEBUG] Created mock_message_data: {mock_message_data}")
 
@@ -212,7 +212,7 @@ async def test_websocket_handler_send_message(
     print(f"[DEBUG] Set up mock_message with model_dump: {mock_message.model_dump()}")
 
     # Mock pipeline response
-    with patch("app.pipelines.manager.PipelineManager.get_pipeline") as mock_get_pipeline:
+    with patch("app.services.ai.pipelines.manager.PipelineManager.get_pipeline") as mock_get_pipeline:
 
         class MockPipeline:
             async def execute(self, *args, **kwargs):
@@ -331,7 +331,7 @@ async def test_websocket_handler_structured_response(
     mock_message.id = 1
     mock_message.content = TEST_MESSAGE
     mock_message.is_ai = False
-    mock_message.timestamp = datetime.now(timezone.utc)
+    mock_message.timestamp = datetime.now(UTC)
     mock_message.model_dump.return_value = {
         "id": 1,
         "content": TEST_MESSAGE,
@@ -345,7 +345,7 @@ async def test_websocket_handler_structured_response(
     connection_manager.broadcast_to_user = broadcast_mock
 
     # Mock pipeline response
-    with patch("app.pipelines.manager.PipelineManager.get_pipeline") as mock_get_pipeline:
+    with patch("app.services.ai.pipelines.manager.PipelineManager.get_pipeline") as mock_get_pipeline:
 
         class MockPipeline:
             async def execute(self, *args, **kwargs):

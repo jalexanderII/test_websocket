@@ -1,15 +1,14 @@
-import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Dict, Set as PySet
 
 from fastapi import WebSocket
 from pydantic import BaseModel
 from redis_data_structures import Dict as RedisDict, Set
 
+from app.config.logger import get_logger
 from app.config.redis import redis_manager
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class WebSocketConnection(BaseModel):
@@ -48,11 +47,11 @@ class ConnectionManager:
         if existing_meta:
             connection_meta = WebSocketConnection.model_validate(existing_meta)
             connection_meta.connection_count += 1
-            connection_meta.last_heartbeat = datetime.now(timezone.utc)
+            connection_meta.last_heartbeat = datetime.now(UTC)
             connection_meta.client_info.update(client_info)
         else:
             connection_meta = WebSocketConnection(
-                user_id=user_id, last_heartbeat=datetime.now(timezone.utc), client_info=client_info, connection_count=1
+                user_id=user_id, last_heartbeat=datetime.now(UTC), client_info=client_info, connection_count=1
             )
 
         self.connection_metadata[meta_key] = connection_meta.model_dump(mode="json")
@@ -60,7 +59,7 @@ class ConnectionManager:
         if user_id not in self._connections:
             self._connections[user_id] = set()
         self._connections[user_id].add(websocket)
-        self._last_heartbeat[websocket] = datetime.now(timezone.utc).timestamp()
+        self._last_heartbeat[websocket] = datetime.now(UTC).timestamp()
 
     def disconnect(self, websocket: WebSocket, user_id: int):
         if user_id in self._connections:
@@ -99,19 +98,19 @@ class ConnectionManager:
 
     def update_heartbeat(self, websocket: WebSocket):
         """Update last heartbeat time for a connection"""
-        self._last_heartbeat[websocket] = datetime.now(timezone.utc).timestamp()
+        self._last_heartbeat[websocket] = datetime.now(UTC).timestamp()
 
     def is_connection_alive(self, websocket: WebSocket, timeout_seconds: int = 30) -> bool:
         """Check if a connection is still alive based on its last heartbeat"""
         if websocket not in self._last_heartbeat:
             return False
         last_heartbeat = self._last_heartbeat[websocket]
-        current_time = datetime.now(timezone.utc).timestamp()
+        current_time = datetime.now(UTC).timestamp()
         return (current_time - last_heartbeat) < timeout_seconds
 
     def get_health_info(self) -> dict:
         """Get detailed health information about WebSocket connections"""
-        current_time = datetime.now(timezone.utc).timestamp()
+        current_time = datetime.now(UTC).timestamp()
         active_connections = sum(len(list(connections)) for connections in self._connections.values())
         dead_connections = sum(1 for ws in self._last_heartbeat if (current_time - self._last_heartbeat[ws]) >= 30)
 
@@ -129,5 +128,5 @@ class ConnectionManager:
                 "newest_heartbeat": max(self._last_heartbeat.values()) if self._last_heartbeat else None,
                 "total_tracked_heartbeats": len(self._last_heartbeat),
             },
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }

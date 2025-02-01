@@ -1,6 +1,5 @@
 import asyncio
 import json
-import logging
 import uuid
 from typing import Dict
 
@@ -8,6 +7,7 @@ from fastapi import WebSocket
 from pydantic import ValidationError
 
 from app.api.handlers.websocket.connection_manager import ConnectionManager
+from app.config.logger import get_logger
 from app.schemas.chat import Message, MessageCreate
 from app.schemas.websocket import CreateChatMessage, JoinChatMessage, SendMessageRequest
 from app.services.ai.adapter import ChatMessage
@@ -16,8 +16,7 @@ from app.services.chat.service import ChatService
 from app.services.core.background_task_processor import BackgroundTaskProcessor, TaskStatus
 from app.utils.universal_serializer import safe_json_dumps
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 background_processor = BackgroundTaskProcessor(max_workers=5)
