@@ -126,7 +126,7 @@ async def test_handle_send_message(handler, mock_connection_manager, mock_chat_s
         assert len(broadcast_calls) >= 7
 
         # Verify message types
-        messages = [json.loads(call.args[1]) for call in broadcast_calls]
+        messages = [json.loads(call.args[1]) for call in broadcast_calls]  # type: ignore
 
         message_types = [msg["type"] for msg in messages]
         assert "message" in message_types  # User message
@@ -152,7 +152,7 @@ async def test_handle_send_message_chat_not_found(handler, mock_background_proce
 
         # Verify error was sent
         handler.manager.broadcast_to_user.assert_called_once()
-        error_message = json.loads(handler.manager.broadcast_to_user.call_args[0][1])
+        error_message = json.loads(handler.manager.broadcast_to_user.call_args[0][1])  # type: ignore
         assert error_message["type"] == "error"
         assert "Chat not found" in error_message["message"]
 
