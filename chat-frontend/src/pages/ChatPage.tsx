@@ -409,7 +409,7 @@ export default function ChatPage() {
       >
         <div
           className={`
-            max-w-[80%] rounded-lg px-4 py-2 break-words relative whitespace-pre-wrap
+            max-w-[80%] rounded-lg px-4 py-2 break-words relative
             ${message.sender === 'user' 
               ? 'bg-primary text-primary-foreground' 
               : 'bg-muted'
@@ -439,7 +439,7 @@ export default function ChatPage() {
           user_id: Number(userId),
           initial_message: initialMessage,
           // TODO: Remove
-          pipeline_type: 'planning'
+          // pipeline_type: 'planning'
         }));
       }
     } else if (chatId) {
@@ -469,7 +469,7 @@ export default function ChatPage() {
         chat_id: currentChatId,
         content: inputMessage,
         // TODO: Remove
-        pipeline_type: 'planning'
+        // pipeline_type: 'planning'
       };
       console.log('[WebSocket] Message object:', messageObj);
       try {

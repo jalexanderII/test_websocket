@@ -5,14 +5,14 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi import WebSocket
 
-from app.adapters.ai_adapter import ChatMessage
-from app.api.handlers.connection_manager import ConnectionManager
-from app.api.handlers.websocket_handler import WebSocketHandler
-from app.config.utils.universal_serializer import safe_json_dumps
-from app.pipelines.base import AIResponse
+from app.api.handlers.websocket.connection_manager import ConnectionManager
+from app.api.handlers.websocket.websocket_handler import WebSocketHandler
 from app.schemas.websocket import SendMessageRequest
-from app.services.background_task_processor import TaskStatus
-from app.services.chat_service import ChatService
+from app.services.ai.adapter import ChatMessage
+from app.services.ai.pipelines.base import AIResponse
+from app.services.chat.service import ChatService
+from app.services.core.background_task_processor import TaskStatus
+from app.utils.universal_serializer import safe_json_dumps
 
 
 @pytest.fixture

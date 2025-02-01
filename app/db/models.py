@@ -5,7 +5,7 @@ from typing import Optional
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship  # type: ignore[attr-defined]
 
-from app.db.database import Base
+from app.config.database import Base
 
 
 class UserDB(Base):
