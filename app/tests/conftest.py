@@ -1,5 +1,6 @@
 import os
 from typing import Generator
+from unittest.mock import patch
 
 import pytest
 import redis
@@ -83,3 +84,16 @@ def clean_redis(redis_client: redis.Redis) -> Generator[None, None, None]:
     redis_client.flushdb()
     yield
     redis_client.flushdb()
+
+
+@pytest.fixture(autouse=True)
+def mock_env_vars():
+    """Mock environment variables for testing"""
+    with patch.dict(
+        "os.environ",
+        {
+            "OPENAI_API_KEY": "test-key",
+            "MODEL_NAME": "test-model",
+        },
+    ):
+        yield
