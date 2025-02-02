@@ -19,8 +19,12 @@ class AIResponse(BaseModel):
 class BasePipeline(ABC):
     """Base class for all AI pipelines"""
 
-    def __init__(self, ai_service: AIService):
-        self.ai_service = ai_service
+    def __init__(self, ai_service: AIService | None = None):
+        self.ai_service = ai_service or self.get_default_ai_service()
+
+    def get_default_ai_service(self) -> AIService:
+        """Get the default AI service for this pipeline type. Override this method to customize the AI service."""
+        return AIService()
 
     @abstractmethod
     def execute(
@@ -43,3 +47,7 @@ class BasePipeline(ABC):
     async def _structured_response(self, response: BaseModel) -> AsyncGenerator[AIResponse, None]:
         """Helper to convert structured response to AIResponse"""
         yield AIResponse(content=response.model_dump_json(), response_type="structured", model_output=response)
+
+    async def _complete_response(self, response: str) -> AsyncGenerator[AIResponse, None]:
+        """Helper to convert complete response to AIResponse"""
+        yield AIResponse(content=response, response_type="complete")

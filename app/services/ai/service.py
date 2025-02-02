@@ -52,18 +52,5 @@ class AIService:
             logger.exception("Error streaming structured response")
             raise
 
-    async def get_completion(
-        self,
-        message: str,
-        history: List[ChatMessage] | None = None,
-    ) -> str:
-        """Get a single completion response"""
-        logger.info("Getting completion response")
-        try:
-            complete_response = ""
-            async for token in self.stream_chat_response(message, history):
-                complete_response += token
-            return complete_response
-        except Exception:
-            logger.exception("Error getting completion")
-            raise
+    async def get_completion(self, message: str, history: List[ChatMessage] | None = None) -> str:
+        return await self.adapter.generate_response(message, history)

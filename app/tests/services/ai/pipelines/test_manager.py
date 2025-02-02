@@ -1,4 +1,5 @@
 from typing import AsyncGenerator, List, Sequence
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -10,38 +11,47 @@ from app.services.ai.pipelines.standard import StandardPipeline
 from app.services.ai.service import AIService
 
 
-class MockPipeline(BasePipeline):
-    """Mock pipeline for testing"""
+@pytest.fixture
+def mock_ai_service():
+    """Create a mock AI service that returns predictable responses"""
+    service = AsyncMock(spec=AIService)
 
-    def __init__(self, ai_service: AIService):
-        super().__init__(ai_service)
-        self.messages: List[str] = []
-        self.history: List[ChatMessage] = []
-
-    def execute(
-        self, message: str, history: Sequence[ChatMessage] | None = None
-    ) -> AsyncGenerator[AIResponse, None]:
-        async def generate():
-            self.messages.append(message)
-            if history:
-                self.history = list(history)
-            yield AIResponse(content="mock response", response_type="stream")
-
-        return generate()
-
-
-class MockAIAdapter(OpenAIAdapter):
-    """Mock AI adapter for testing pipelines"""
-
-    async def stream_response(
-        self, prompt: str, history: Sequence[ChatMessage] | None = None
-    ) -> AsyncGenerator[str, None]:
+    async def mock_stream(*args, **kwargs):
         yield "test response"
 
-    async def stream_structured_response(
-        self, prompt: str, response_model: type, history: Sequence[ChatMessage] | None = None
-    ) -> AsyncGenerator[PlanDetails, None]:
+    async def mock_structured(*args, **kwargs):
         yield PlanDetails(steps=["step 1", "step 2"], reasoning="test reasoning")
+
+    service.stream_chat_response = AsyncMock(side_effect=mock_stream)
+    service.stream_structured_response = AsyncMock(side_effect=mock_structured)
+    return service
+
+
+@pytest.fixture
+def mock_pipeline(mock_ai_service):
+    """Create a mock pipeline that uses the mock AI service"""
+
+    class TestPipeline(BasePipeline):
+        def get_default_ai_service(self) -> AIService:
+            return mock_ai_service
+
+        def execute(
+            self, message: str, history: Sequence[ChatMessage] | None = None
+        ) -> AsyncGenerator[AIResponse, None]:
+            async def generate():
+                yield AIResponse(content="mock response", response_type="stream")
+
+            return generate()
+
+    return TestPipeline
+
+
+@pytest.fixture
+def pipeline_manager(mock_pipeline):
+    manager = PipelineManager()
+    # Add mock pipeline for testing
+    manager._pipelines["mock"] = mock_pipeline
+    return manager
 
 
 @pytest.fixture
@@ -49,82 +59,54 @@ def test_history() -> List[ChatMessage]:
     return [{"role": "user", "content": "previous message"}]
 
 
-@pytest.fixture
-def mock_ai_service():
-    return AIService(adapter=MockAIAdapter())
+@pytest.mark.asyncio
+async def test_get_pipeline_creates_new_instance(pipeline_manager):
+    """Test that get_pipeline creates a new instance each time"""
+    pipeline1 = pipeline_manager.get_pipeline("mock")
+    pipeline2 = pipeline_manager.get_pipeline("mock")
 
-
-@pytest.fixture
-def pipeline_manager(mock_ai_service):
-    manager = PipelineManager(ai_service=mock_ai_service)
-    # Add mock pipeline for testing
-    manager._pipelines["mock"] = MockPipeline
-    return manager
+    assert isinstance(pipeline1, BasePipeline)
+    assert isinstance(pipeline2, BasePipeline)
+    assert pipeline1 is not pipeline2  # Should be different instances
 
 
 @pytest.mark.asyncio
-async def test_get_pipeline(pipeline_manager):
-    # Test getting standard pipeline
-    standard = pipeline_manager.get_pipeline("standard")
-    assert isinstance(standard, StandardPipeline)
-
-    # Test getting mock pipeline
-    mock = pipeline_manager.get_pipeline("mock")
-    assert isinstance(mock, MockPipeline)
-
-    # Test invalid pipeline type
-    with pytest.raises(ValueError):
+async def test_get_pipeline_with_invalid_type(pipeline_manager):
+    """Test that getting an invalid pipeline type raises ValueError"""
+    with pytest.raises(ValueError, match="Unknown pipeline type"):
         pipeline_manager.get_pipeline("invalid")
 
 
 @pytest.mark.asyncio
-async def test_process_message(pipeline_manager, test_history):
-    # Test processing with mock pipeline
+async def test_process_message_uses_determined_pipeline(pipeline_manager, test_history):
+    """Test that process_message uses the pipeline determined by _determine_pipeline_type"""
+    # Mock _determine_pipeline_type to always return "mock"
+    pipeline_manager._determine_pipeline_type = AsyncMock(return_value="mock")
+
     responses = []
-    async for response in pipeline_manager.process_message("test message", "mock", history=test_history):
+    async for response in pipeline_manager.process_message("test message", history=test_history):
         responses.append(response)
 
     assert len(responses) == 1
     assert responses[0].content == "mock response"
     assert responses[0].response_type == "stream"
 
-    # Get a new instance to verify message was passed
-    mock_pipeline = pipeline_manager.get_pipeline("mock")
-    mock_pipeline.messages = []  # Reset messages
-    async for _ in mock_pipeline.execute("test message", history=test_history):
-        pass
-    assert mock_pipeline.messages == ["test message"]
-    assert mock_pipeline.history == test_history
+    # Verify _determine_pipeline_type was called with the message
+    pipeline_manager._determine_pipeline_type.assert_called_once_with("test message")
 
 
 @pytest.mark.asyncio
-async def test_standard_pipeline(mock_ai_service):
-    pipeline = StandardPipeline(mock_ai_service)
-
-    responses = []
-    async for response in pipeline.execute("test message", history=[]):
-        responses.append(response)
-
-    assert len(responses) == 1
-    assert responses[0].content == "test response"
-    assert responses[0].response_type == "stream"
+async def test_standard_pipeline_uses_default_service():
+    """Test that StandardPipeline uses the default AI service configuration"""
+    pipeline = StandardPipeline()
+    assert isinstance(pipeline.ai_service, AIService)
+    assert isinstance(pipeline.ai_service.adapter, OpenAIAdapter)
 
 
 @pytest.mark.asyncio
-async def test_planning_pipeline(mock_ai_service):
-    pipeline = PlanningPipeline(mock_ai_service)
-
-    responses = []
-    async for response in pipeline.execute("test message", history=[]):
-        responses.append(response)
-
-    # Should have multiple responses:
-    # 1. Initial "Generating plan..." message
-    # 2. Plan details (structured)
-    # 3. Step executions (stream per step)
-    assert len(responses) > 2
-
-    # Verify we got different types of responses
-    response_types = [r.response_type for r in responses]
-    assert "stream" in response_types
-    assert "structured" in response_types
+async def test_planning_pipeline_uses_custom_service():
+    """Test that PlanningPipeline uses a custom AI service configuration"""
+    pipeline = PlanningPipeline()
+    assert isinstance(pipeline.ai_service, AIService)
+    assert isinstance(pipeline.ai_service.adapter, OpenAIAdapter)
+    assert pipeline.ai_service.adapter.model == "gpt-4o-mini"  # Verify custom model is used

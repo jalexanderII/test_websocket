@@ -4,7 +4,7 @@ from typing import AsyncGenerator, List, Sequence
 from pydantic import BaseModel
 
 from app.config.logger import get_logger
-from app.services.ai.adapter import ChatMessage
+from app.services.ai.adapter import ChatMessage, OpenAIAdapter
 from app.services.ai.pipelines.base import AIResponse, BasePipeline
 from app.services.ai.service import AIService
 from app.utils.universal_serializer import safe_json_dumps
@@ -22,8 +22,10 @@ class PlanDetails(BaseModel):
 class PlanningPipeline(BasePipeline):
     """Pipeline that first plans steps then executes them"""
 
-    def __init__(self, ai_service: AIService):
-        super().__init__(ai_service)
+    def get_default_ai_service(self) -> AIService:
+        """Override to use a more capable model for planning"""
+        planning_adapter = OpenAIAdapter(model="gpt-4o-mini")  # Use a more capable model for planning
+        return AIService(adapter=planning_adapter)
 
     def execute(
         self,

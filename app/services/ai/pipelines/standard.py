@@ -1,6 +1,7 @@
 from typing import AsyncGenerator, Sequence
 
-from app.services.ai.adapter import ChatMessage
+from app.config.settings import settings
+from app.services.ai.adapter import ChatMessage, OpenAIAdapter
 from app.services.ai.pipelines.base import AIResponse, BasePipeline
 from app.services.ai.service import AIService
 
@@ -8,8 +9,10 @@ from app.services.ai.service import AIService
 class StandardPipeline(BasePipeline):
     """Standard pipeline that streams responses directly"""
 
-    def __init__(self, ai_service: AIService):
-        super().__init__(ai_service)
+    def get_default_ai_service(self) -> AIService:
+        """Use the default model configuration for standard responses"""
+        standard_adapter = OpenAIAdapter(model=settings.MODEL_NAME)  # Use default model from settings
+        return AIService(adapter=standard_adapter)
 
     def execute(
         self,

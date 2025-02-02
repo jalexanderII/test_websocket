@@ -94,14 +94,10 @@ class WebSocketHandler:
             logger.info("[WebSocket] Retrieved chat history, starting pipeline processing")
 
             # Start pipeline processing in background
-            pipeline_type = message.pipeline_type if message.pipeline_type else "standard"
-            logger.info("[WebSocket] Starting pipeline processing with type: %s", pipeline_type)
-
             # Create a wrapper function to ensure all arguments are passed correctly
             async def process_pipeline_wrapper():
                 return await self._process_pipeline_message(
                     message=message.content,
-                    pipeline_type=pipeline_type,
                     history=history,
                     chat_id=message.chat_id,
                     task_id=task_id,
@@ -120,7 +116,6 @@ class WebSocketHandler:
     async def _process_pipeline_message(
         self,
         message: str,
-        pipeline_type: str,
         history: list[ChatMessage],
         chat_id: int,
         task_id: str,
@@ -128,9 +123,7 @@ class WebSocketHandler:
         """Process a message through the pipeline in the background"""
         try:
             complete_response = ""
-            async for response in self.pipeline_manager.process_message(
-                message=message, pipeline_type=pipeline_type, history=history
-            ):
+            async for response in self.pipeline_manager.process_message(message=message, history=history):
                 if response.response_type == "stream":
                     # Send streaming token but don't save yet
                     complete_response += response.content
@@ -233,16 +226,12 @@ class WebSocketHandler:
                 logger.info("[WebSocket] Retrieved chat history, starting pipeline processing")
 
                 # Start pipeline processing in background
-                pipeline_type = message.pipeline_type if message.pipeline_type else "standard"
-                logger.info("[WebSocket] Starting pipeline processing with type: %s", pipeline_type)
-
                 pipeline_task_id = str(uuid.uuid4())
 
                 # Start pipeline processing in background with standard type
                 async def process_pipeline_wrapper():
                     return await self._process_pipeline_message(
                         message=message.initial_message or "",
-                        pipeline_type=pipeline_type,
                         history=history,
                         chat_id=chat_id,
                         task_id=pipeline_task_id,

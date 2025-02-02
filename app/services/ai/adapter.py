@@ -28,9 +28,9 @@ class ChatMessage(TypedDict):
 
 
 class OpenAIAdapter(AIModel):
-    def __init__(self):
+    def __init__(self, model: str | None = None):
         self.client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-        self.model = settings.MODEL_NAME
+        self.model = model or settings.MODEL_NAME
 
     def _convert_to_openai_messages(self, messages: Sequence[ChatMessage]) -> List[ChatCompletionMessageParam]:
         return [
