@@ -6,7 +6,7 @@ from typing import AsyncGenerator, cast
 import pytest
 import pytest_asyncio
 
-from app.services.core.background_task_processor import BackgroundTaskProcessor, TaskData, TaskStatus
+from app.services.core.background_task_processor import TASK_KEY_PREFIX, BackgroundTaskProcessor, TaskData, TaskStatus
 
 
 @pytest_asyncio.fixture
@@ -17,15 +17,15 @@ async def task_processor() -> AsyncGenerator[BackgroundTaskProcessor, None]:
         yield processor
     finally:
         # Clean up any remaining tasks
-        tasks = [t for t in processor._background_tasks]
+        tasks = await processor._background_tasks.members()
         if tasks:
             for task in tasks:
                 if not task.done():
                     task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            await asyncio.gather(*[task.get_coro() for task in tasks if not task.done()], return_exceptions=True)
 
         # Clean up Redis keys
-        pattern = f"{processor._task_key_prefix}*"
+        pattern = f"{TASK_KEY_PREFIX}*"
         cursor = 0
         while True:
             cursor, keys = await processor._redis.scan(cursor, match=pattern)
@@ -66,7 +66,7 @@ async def test_add_task_sync(task_processor: BackgroundTaskProcessor):
     # Check initial task state
     task_data = await task_processor.get_task_result(task_id)
     assert task_data is not None
-    assert task_data["status"] == TaskStatus.PENDING
+    assert task_data["status"] == TaskStatus.RUNNING
     assert task_data["result"] is None
     assert task_data["error"] is None
     assert "created_at" in task_data
@@ -81,7 +81,7 @@ async def test_add_task_async(task_processor: BackgroundTaskProcessor):
     # Check initial task state
     task_data = await task_processor.get_task_result(task_id)
     assert task_data is not None
-    assert task_data["status"] == TaskStatus.PENDING
+    assert task_data["status"] == TaskStatus.RUNNING
     assert task_data["result"] is None
     assert task_data["error"] is None
 
@@ -165,14 +165,19 @@ async def test_cancel_task(task_processor: BackgroundTaskProcessor):
 @pytest.mark.asyncio
 async def test_cleanup_old_tasks(task_processor: BackgroundTaskProcessor):
     """Test cleaning up old tasks"""
-    # Add some tasks
+
+    async def slow_task():
+        await asyncio.sleep(0.5)
+        return "done"
+
+    # Add tasks - one completes immediately, one is slow and can be cancelled
     task_id1 = await task_processor.add_task(sync_test_func)
-    task_id2 = await task_processor.add_task(sync_test_func)
+    task_id2 = await task_processor.add_task(slow_task)
 
-    # Complete one task
-    await task_processor._execute_sync_task(task_id1, sync_test_func)
+    # Wait a tiny bit to ensure the second task has started but not completed
+    await asyncio.sleep(0.1)
 
-    # Cancel one task
+    # Cancel the slow task before it completes
     await task_processor.cancel_task(task_id2)
 
     # Verify tasks are in the correct state
@@ -216,7 +221,7 @@ async def test_concurrent_tasks(task_processor: BackgroundTaskProcessor):
         task_id = await task_processor.add_task(slow_task, 0.1)
         task_ids.append(task_id)
 
-    # Execute tasks manually since we're not using the background task feature in tests
+    # Execute tasks manually
     for task_id in task_ids:
         await task_processor._execute_async_task(task_id, slow_task, 0.1)
 
@@ -238,4 +243,4 @@ async def test_custom_task_id(task_processor: BackgroundTaskProcessor):
     assert task_id == custom_id
     task_data = await task_processor.get_task_result(custom_id)
     assert task_data is not None
-    assert task_data["status"] == TaskStatus.PENDING
+    assert task_data["status"] == TaskStatus.RUNNING

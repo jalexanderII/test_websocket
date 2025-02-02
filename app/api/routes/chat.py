@@ -40,7 +40,7 @@ async def get_user_chats(user_id: int, db: Session = Depends(get_db)):
 @chat_router.post("/chats/batch-delete", status_code=200)
 async def delete_chats(request: DeleteChatsRequest, db: Session = Depends(get_db)):
     chat_service = ChatService(db)
-    chat_service.delete_chats(request.chat_ids)
+    await chat_service.delete_chats(request.chat_ids)
     return {"status": "success", "deleted_count": len(request.chat_ids)}
 
 
@@ -48,5 +48,5 @@ async def delete_chats(request: DeleteChatsRequest, db: Session = Depends(get_db
 async def delete_empty_chats(user_id: int, db: Session = Depends(get_db)):
     """Delete all empty chats for a user."""
     chat_service = ChatService(db)
-    deleted_count = chat_service.delete_empty_chats(user_id)
+    deleted_count = await chat_service.delete_empty_chats(user_id)
     return {"deleted_count": deleted_count}

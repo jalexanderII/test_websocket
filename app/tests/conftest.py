@@ -6,7 +6,6 @@ import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
 from redis.asyncio import Redis
-from redis_data_structures import ConnectionManager
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -14,6 +13,7 @@ from sqlalchemy.pool import StaticPool
 from app.config.database import Base, get_db
 from app.config.redis import async_redis
 from app.main import app
+from app.utils.async_redis_utils.connection import AsyncConnectionManager
 
 # Create in-memory SQLite database for testing
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
@@ -68,16 +68,16 @@ def redis_config() -> dict:
 async def redis_client() -> AsyncGenerator[Redis, None]:
     """Create a Redis client for testing."""
     try:
-        await async_redis.ping()
-        yield async_redis
+        await async_redis.client.ping()
+        yield async_redis.client
     finally:
-        await async_redis.aclose()
+        await async_redis.client.aclose()
 
 
 @pytest.fixture(scope="session")
-def connection_manager(redis_config: dict) -> ConnectionManager:
+async def connection_manager(redis_config: dict) -> AsyncConnectionManager:
     """Create a ConnectionManager instance for testing."""
-    return ConnectionManager(**redis_config)
+    return AsyncConnectionManager(**redis_config)
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -99,3 +99,13 @@ def mock_env_vars():
         },
     ):
         yield
+
+
+@pytest_asyncio.fixture(scope="session")
+def event_loop():
+    """Create an event loop for each test session."""
+    import asyncio
+
+    loop = asyncio.new_event_loop()
+    yield loop
+    loop.close()

@@ -5,13 +5,14 @@ from app.api.handlers.websocket.connection_manager import ConnectionManager
 from app.api.handlers.websocket.websocket_handler import WebSocketHandler
 from app.config.database import get_db
 from app.config.logger import get_logger
+from app.config.redis import async_redis
 from app.services.chat.service import ChatService
 
 logger = get_logger(__name__)
 
 
 ws_router = APIRouter()
-manager = ConnectionManager()
+manager = ConnectionManager(async_redis)
 
 
 @ws_router.websocket("/ws/{user_id}")
@@ -37,7 +38,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int, db: Session = D
                 break
             elif message_type == "websocket.ping":
                 await websocket.send({"type": "websocket.pong"})
-                manager.update_heartbeat(websocket)
+                await manager.update_heartbeat(websocket)
             elif message_type == "websocket.receive":
                 data = message.get("text")
                 if not data:
@@ -53,10 +54,11 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int, db: Session = D
         logger.exception("WebSocket error: %s", str(e))
     finally:
         logger.info("Cleaning up WebSocket connection for user_id: %s", user_id)
-        manager.disconnect(websocket, user_id)
+        await manager.disconnect(websocket, user_id)
 
 
 @ws_router.get("/ws/health")
 async def websocket_health():
     """Health check endpoint for WebSocket service with detailed metrics"""
-    return manager.get_health_info()
+    health_info = await manager.get_health_info()
+    return health_info

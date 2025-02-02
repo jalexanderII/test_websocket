@@ -7,17 +7,18 @@ from typing import (
 )
 
 from pydantic import BaseModel
-from redis_data_structures import LRUCache, Queue
 from sqlalchemy import func, update
 from sqlalchemy.orm import Session
 
 from app.config.logger import get_logger
-from app.config.redis import redis_manager
+from app.config.redis import async_redis
 from app.db.models import ChatDB, MessageDB, UserDB
 from app.schemas.chat import Chat, Message, MessageCreate
 from app.services.ai.adapter import ChatMessage
 from app.services.ai.pipelines.base import AIResponse
 from app.services.ai.service import AIService
+from app.utils.async_redis_utils.lrucache import AsyncLRUCache
+from app.utils.async_redis_utils.queue import AsyncQueue
 from app.utils.universal_serializer import safe_json_dumps
 
 logger = get_logger(__name__)
@@ -37,8 +38,8 @@ class ChatService:
     def __init__(self, db: Session, ai_service: AIService | None = None):
         self.db = db
         self.ai_service = ai_service or AIService()
-        self.chat_cache = LRUCache("chat_history", capacity=1000, connection_manager=redis_manager)
-        self.message_queue = Queue("chat_messages", connection_manager=redis_manager)
+        self.chat_cache = AsyncLRUCache("chat_history", capacity=1000, connection_manager=async_redis)
+        self.message_queue = AsyncQueue("chat_messages", connection_manager=async_redis)
 
     async def create_chat(self, user_id: int) -> Chat:
         user = self.db.query(UserDB).filter(UserDB.id == user_id).first()
@@ -64,7 +65,7 @@ class ChatService:
         return Chat.model_validate(db_chat)
 
     async def get_chat(self, chat_id: int) -> Chat | None:
-        cached_chat = self.chat_cache.get(str(chat_id))
+        cached_chat = await self.chat_cache.get(str(chat_id))
         if cached_chat:
             return Chat.model_validate(cached_chat)
 
@@ -74,7 +75,7 @@ class ChatService:
             return None
 
         chat = Chat.model_validate(db_chat)
-        self.chat_cache.put(str(chat_id), chat.model_dump())
+        await self.chat_cache.put(str(chat_id), chat.model_dump())
         return chat
 
     async def get_user_chats(self, user_id: int) -> List[Chat]:
@@ -106,7 +107,7 @@ class ChatService:
 
         # Queue for processing if user message
         if not message.is_ai:
-            self.message_queue.push(
+            await self.message_queue.push(
                 {
                     "chat_id": message.chat_id,
                     "content": message.content,
@@ -116,7 +117,7 @@ class ChatService:
             )
 
         # Invalidate cache
-        self.chat_cache.remove(str(message.chat_id))
+        await self.chat_cache.remove(str(message.chat_id))
 
         return Message.model_validate(db_message)
 
@@ -164,7 +165,7 @@ class ChatService:
             self.db.commit()
             logger.info("Updated message %s with complete response (length: %d)", db_message.id, len(complete_response))
 
-            self.chat_cache.remove(str(chat_id))
+            await self.chat_cache.remove(str(chat_id))
 
         except Exception:
             logger.exception("Error during streaming")
@@ -226,7 +227,7 @@ class ChatService:
             # Don't need to handle partial responses as we update continuously
             raise
 
-    def delete_chats(self, chat_ids: List[int]) -> None:
+    async def delete_chats(self, chat_ids: List[int]) -> None:
         """Delete multiple chats by their IDs"""
         if not chat_ids:
             return
@@ -244,17 +245,17 @@ class ChatService:
                 logger.info("Deleted %d chats and %d messages", deleted_chats, deleted_messages)
 
             # Batch remove from cache using Redis pipeline
-            with redis_manager.pipeline() as pipe:
+            async with async_redis.pipeline() as pipe:
                 for chat_id in chat_ids:
-                    self.chat_cache.remove(str(chat_id))
-                pipe.execute()
+                    await self.chat_cache.remove(str(chat_id))
+                await pipe.execute()
 
         except Exception as e:
             logger.error("Failed to delete chats: %s", str(e))
             self.db.rollback()
             raise
 
-    def delete_empty_chats(self, user_id: int) -> int:
+    async def delete_empty_chats(self, user_id: int) -> int:
         """Delete all empty chats for a user. Returns number of chats deleted."""
 
         # First find all empty chats using a subquery
@@ -276,6 +277,6 @@ class ChatService:
 
             # Clear cache for deleted chats
             for chat_id in empty_chat_ids:
-                self.chat_cache.remove(str(chat_id))
+                await self.chat_cache.remove(str(chat_id))
 
         return len(empty_chat_ids)

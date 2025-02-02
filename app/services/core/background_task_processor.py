@@ -1,18 +1,22 @@
 import asyncio
 import inspect
 import json
-import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 from functools import partial
 from typing import Any, Callable, TypedDict, cast
 
+from pydantic import BaseModel
 from redis.asyncio.client import PubSub
 
+from app.config.logger import get_logger
 from app.config.redis import async_redis
+from app.utils.async_redis_utils.dict import AsyncDict
+from app.utils.async_redis_utils.set import AsyncSet
+from app.utils.async_redis_utils.task_serializer import SerializableTask
 from app.utils.universal_serializer import safe_json_dumps
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class TaskData(TypedDict):
@@ -26,19 +30,16 @@ class TaskData(TypedDict):
     error: str | None
 
 
-def _serialize_datetime(obj: Any) -> Any:
-    """Helper function to serialize datetime objects for JSON"""
-    if isinstance(obj, datetime):
-        return obj.isoformat()
-    raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
-
-
 class TaskStatus:
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+
+
+TASK_KEY_PREFIX = "background_task_results:"
+TASK_CHANNEL_PREFIX = "task_updates:"
 
 
 class BackgroundTaskProcessor:
@@ -50,37 +51,42 @@ class BackgroundTaskProcessor:
             max_workers: Maximum number of concurrent worker threads
             result_ttl: Time in seconds to keep completed task results
         """
-        self._redis = async_redis  # Use async Redis instead of sync
-        self._task_key_prefix = "background_task_results:"
-        self._task_channel_prefix = "task_updates:"
+        self._redis = async_redis.client
         self._max_workers = max_workers
         self._result_ttl = result_ttl
         self._semaphore = asyncio.Semaphore(max_workers)
-        self._background_tasks: set[asyncio.Task] = set()
-        self._tasks: dict[str, asyncio.Task] = {}  # Mapping of task_id to asyncio.Task
+        self._background_tasks: AsyncSet[SerializableTask] = AsyncSet(
+            "background_tasks", connection_manager=async_redis
+        )
+        self._tasks: AsyncDict[str, SerializableTask] = AsyncDict("tasks", connection_manager=async_redis)
+        self._task_to_id: AsyncDict[SerializableTask, str] = AsyncDict("task_to_id", connection_manager=async_redis)
 
-    def _remove_task_from_set(self, task: asyncio.Task) -> None:
+        # Register our custom type with the serializers
+        self._background_tasks.register_types(SerializableTask)
+        self._tasks.register_types(SerializableTask)
+        self._task_to_id.register_types(SerializableTask)
+
+    async def _remove_task_from_set(self, task: asyncio.Task) -> None:
         """Remove a task from the background tasks set and tasks mapping"""
-        self._background_tasks.discard(task)
-        # Find and remove the task from the tasks mapping
-        task_ids_to_remove = [task_id for task_id, t in self._tasks.items() if t == task]
-        for task_id in task_ids_to_remove:
-            self._tasks.pop(task_id, None)
+        serializable_task = SerializableTask(task)
+        await self._background_tasks.remove(serializable_task)
+        if task_id := await self._task_to_id.get(serializable_task):
+            await self._tasks.delete(task_id)
+            await self._task_to_id.delete(serializable_task)
             logger.debug("Removed task %s from tasks mapping", task_id)
 
-    def _serialize_result(self, result: Any) -> Any:
-        """Serialize result for storage, handling special types like datetime"""
-        if hasattr(result, "model_dump"):
+    def _serialize_result(self, result: Any) -> dict[str, Any]:
+        if isinstance(result, BaseModel):
             return result.model_dump()
-        return json.loads(safe_json_dumps(result, default=_serialize_datetime))
+        return json.loads(safe_json_dumps(result))
 
     def _get_task_key(self, task_id: str) -> str:
         """Get the Redis key for a task"""
-        return f"{self._task_key_prefix}{task_id}"
+        return f"{TASK_KEY_PREFIX}{task_id}"
 
     def _get_task_channel(self, task_id: str) -> str:
         """Get the Redis channel name for a task"""
-        return f"{self._task_channel_prefix}{task_id}"
+        return f"{TASK_CHANNEL_PREFIX}{task_id}"
 
     async def _publish_task_update(self, task_id: str, status: str, data: dict | None = None) -> None:
         """Publish task updates to Redis channel"""
@@ -111,9 +117,9 @@ class BackgroundTaskProcessor:
         task_id = task_id or str(uuid.uuid4())
         logger.info("Adding new task with ID: %s", task_id)
 
-        # Store initial task metadata
+        # Store initial task metadata with RUNNING state since tasks start immediately
         task_data = {
-            "status": TaskStatus.PENDING,
+            "status": TaskStatus.RUNNING,  # Tasks start in RUNNING state
             "created_at": datetime.now(UTC).isoformat(),
             "updated_at": datetime.now(UTC).isoformat(),
             "completed_at": None,
@@ -126,18 +132,33 @@ class BackgroundTaskProcessor:
         is_async = inspect.iscoroutinefunction(func)
         logger.debug("Task %s is %s", task_id, "async" if is_async else "sync")
 
-        # Create and store task
+        # Create and start task immediately
         if is_async:
-            task = asyncio.create_task(self._execute_async_task(task_id, func, *args, **kwargs))
+            coro = self._execute_async_task(task_id, func, *args, **kwargs)
         else:
-            task = asyncio.create_task(self._execute_sync_task(task_id, func, *args, **kwargs))
+            coro = self._execute_sync_task(task_id, func, *args, **kwargs)
 
-        # Add task to set and setup cleanup
-        self._background_tasks.add(task)
-        self._tasks[task_id] = task  # Store in tasks mapping
-        task.add_done_callback(self._remove_task_from_set)
+        # Create and store task
+        task = asyncio.create_task(coro, name=task_id)
+        serializable_task = SerializableTask(task)
+
+        # Store task references
+        await self._background_tasks.add(serializable_task)
+        await self._tasks.set(task_id, serializable_task)
+        await self._task_to_id.set(serializable_task, task_id)
+
+        # Setup cleanup callback
+        task.add_done_callback(lambda t: asyncio.create_task(self._remove_task_from_set(t)))
 
         return task_id
+
+    async def _start_task(self, task_id: str) -> None:
+        """Start task execution after a short delay to allow status checks"""
+        await asyncio.sleep(0.1)  # Small delay to allow status checks
+        if serializable_task := await self._tasks.get(task_id):
+            if task := serializable_task.get_task():
+                if not task.done() and not task.cancelled():
+                    await self._update_task_status(task_id, TaskStatus.RUNNING)
 
     async def _execute_async_task(self, task_id: str, func: Callable, *args, **kwargs) -> None:
         """Execute an async task directly"""
@@ -262,27 +283,16 @@ class BackgroundTaskProcessor:
                 return False
 
             # Cancel the actual asyncio task if it exists
-            if task := self._tasks.get(task_id):
+            if serializable_task := await self._tasks.get(task_id):
                 logger.debug("Found active task for %s, cancelling it", task_id)
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-
-            task_data.update(
-                {
-                    "status": TaskStatus.CANCELLED,
-                    "updated_at": datetime.now(UTC).isoformat(),
-                    "completed_at": datetime.now(UTC).isoformat(),
-                }
-            )
-            await self._redis.set(task_key, safe_json_dumps(task_data), ex=self._result_ttl)
-            await self._publish_task_update(task_id, TaskStatus.CANCELLED)
-            logger.info("Successfully cancelled task %s", task_id)
-            return True
-
-        logger.debug("Task %s not found", task_id)
+                if task := serializable_task.get_task():
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
+                    await self._update_task_status(task_id, TaskStatus.CANCELLED)
+                    return True
         return False
 
     async def cleanup_old_tasks(self, max_age: timedelta | None = None) -> int:
@@ -294,7 +304,7 @@ class BackgroundTaskProcessor:
         cleaned = 0
 
         # Get all task keys
-        pattern = f"{self._task_key_prefix}*"
+        pattern = f"{TASK_KEY_PREFIX}*"
         cursor = 0
         while True:
             cursor, keys = await self._redis.scan(cursor, match=pattern)
