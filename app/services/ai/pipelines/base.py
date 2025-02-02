@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from enum import Enum
 from typing import AsyncGenerator, Dict, Sequence
 
 from pydantic import BaseModel
@@ -7,11 +8,17 @@ from app.services.ai.adapter import ChatMessage
 from app.services.ai.service import AIService
 
 
+class AIResponseType(str, Enum):
+    STREAM = "stream"
+    STRUCTURED = "structured"
+    COMPLETE = "complete"
+
+
 class AIResponse(BaseModel):
     """Base class for all AI responses"""
 
     content: str
-    response_type: str = "stream"  # stream, structured, complete
+    response_type: AIResponseType = AIResponseType.STREAM
     model_output: BaseModel | None = None
     metadata: Dict | None = None
 
@@ -35,19 +42,21 @@ class BasePipeline(ABC):
         """Execute the pipeline on a message"""
 
         async def generate():
-            yield AIResponse(content="Not implemented", response_type="stream")
+            yield AIResponse(content="Not implemented", response_type=AIResponseType.STREAM)
 
         return generate()
 
     async def _stream_response(self, response: AsyncGenerator[str, None]) -> AsyncGenerator[AIResponse, None]:
         """Helper to convert token stream to AIResponse stream"""
         async for token in response:
-            yield AIResponse(content=token, response_type="stream")
+            yield AIResponse(content=token, response_type=AIResponseType.STREAM)
 
     async def _structured_response(self, response: BaseModel) -> AsyncGenerator[AIResponse, None]:
         """Helper to convert structured response to AIResponse"""
-        yield AIResponse(content=response.model_dump_json(), response_type="structured", model_output=response)
+        yield AIResponse(
+            content=response.model_dump_json(), response_type=AIResponseType.STRUCTURED, model_output=response
+        )
 
     async def _complete_response(self, response: str) -> AsyncGenerator[AIResponse, None]:
         """Helper to convert complete response to AIResponse"""
-        yield AIResponse(content=response, response_type="complete")
+        yield AIResponse(content=response, response_type=AIResponseType.COMPLETE)

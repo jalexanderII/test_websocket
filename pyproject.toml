@@ -127,7 +127,8 @@ ignore = [
     "E501", # Formatted code may exceed the line length, leading to line-too-long errors.
     "PT023", # Whether to ensure @pytest.mark.foo vs @pytest.mark.foo()
     "B904", # raise-without-from-inside-except
-    "E101" # Indentation contains mixed spaces and tabs
+    "E101", # Indentation contains mixed spaces and tabs
+    "ASYNC109", # Timeouts param in async function
 ]
 
 [tool.ruff.lint.per-file-ignores]

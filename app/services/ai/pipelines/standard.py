@@ -2,7 +2,7 @@ from typing import AsyncGenerator, Sequence
 
 from app.config.settings import settings
 from app.services.ai.adapter import ChatMessage, OpenAIAdapter
-from app.services.ai.pipelines.base import AIResponse, BasePipeline
+from app.services.ai.pipelines.base import AIResponse, AIResponseType, BasePipeline
 from app.services.ai.service import AIService
 
 
@@ -25,6 +25,6 @@ class StandardPipeline(BasePipeline):
             # Convert sequence to list for AI service
             history_list = list(history) if history is not None else None
             async for token in self.ai_service.stream_chat_response(message, history=history_list):
-                yield AIResponse(content=token, response_type="stream")
+                yield AIResponse(content=token, response_type=AIResponseType.STREAM)
 
         return generate()

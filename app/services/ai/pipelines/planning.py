@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 from app.config.logger import get_logger
 from app.services.ai.adapter import ChatMessage, OpenAIAdapter
-from app.services.ai.pipelines.base import AIResponse, BasePipeline
+from app.services.ai.pipelines.base import AIResponse, AIResponseType, BasePipeline
 from app.services.ai.service import AIService
 from app.utils.universal_serializer import safe_json_dumps
 
@@ -39,7 +39,7 @@ class PlanningPipeline(BasePipeline):
             history_list = list(history) if history is not None else None
 
             # First, generate a plan
-            yield AIResponse(content="Generating plan...", response_type="stream")
+            yield AIResponse(content="Generating plan...", response_type=AIResponseType.STREAM)
 
             # Create a unique ID for this structured response
             structured_id = str(uuid.uuid4())
@@ -55,7 +55,7 @@ class PlanningPipeline(BasePipeline):
                 last_plan = plan
                 response = AIResponse(
                     content=safe_json_dumps(plan),
-                    response_type="structured",
+                    response_type=AIResponseType.STRUCTURED,
                     metadata={"structured_id": structured_id},
                 )
                 yield response
@@ -66,14 +66,14 @@ class PlanningPipeline(BasePipeline):
                 logger.info("Executing steps from plan: %s", plan)
                 for i, step in enumerate(plan.steps, 1):
                     logger.info("Executing step %d: %s", i, step)
-                    yield AIResponse(content=f"\nExecuting step {i}: {step}\n", response_type="stream")
+                    yield AIResponse(content=f"\nExecuting step {i}: {step}\n", response_type=AIResponseType.STREAM)
                     async for token in self.ai_service.stream_chat_response(
                         f"Execute step {i}: {step}\nContext: {message}",
                         history=history_list,
                     ):
-                        yield AIResponse(content=token, response_type="stream")
+                        yield AIResponse(content=token, response_type=AIResponseType.STREAM)
             else:
                 logger.error("No plan was generated, cannot execute steps")
-                yield AIResponse(content="Error: No plan was generated", response_type="stream")
+                yield AIResponse(content="Error: No plan was generated", response_type=AIResponseType.STREAM)
 
         return generate()
