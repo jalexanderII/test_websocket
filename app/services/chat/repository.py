@@ -1,116 +1,101 @@
-from typing import List
+from datetime import UTC, datetime
+from typing import List, Tuple
 
+from sqlalchemy import func, update
 from sqlalchemy.orm import Session
 
-from app.db.models import ChatDB, MessageDB
-from app.schemas.chat import Chat, Message
+from app.db.models import ChatDB, MessageDB, UserDB
+from app.schemas.chat import Chat, Message, MessageCreate
 
 
 class ChatRepository:
     def __init__(self, db: Session):
         self.db = db
 
+    def get_or_create_user(self, user_id: int) -> UserDB:
+        user = self.db.query(UserDB).filter(UserDB.id == user_id).first()
+        if not user:
+            user = UserDB(
+                id=user_id,
+                username=f"user_{user_id}",
+                email=f"user_{user_id}@example.com",
+            )
+            self.db.add(user)
+            self.db.commit()
+            self.db.refresh(user)
+        return user
+
     def create_chat(self, user_id: int) -> Chat:
+        # Ensure user exists
+        self.get_or_create_user(user_id)
+
+        # Create new chat
         db_chat = ChatDB(user_id=user_id)
         self.db.add(db_chat)
         self.db.commit()
         self.db.refresh(db_chat)
-        return Chat(
-            id=db_chat.id,
-            user_id=db_chat.user_id,
-            created_at=db_chat.created_at,
-            updated_at=db_chat.updated_at,
-        )
+
+        return Chat.model_validate(db_chat)
 
     def get_chat(self, chat_id: int) -> Chat | None:
         db_chat = self.db.query(ChatDB).filter(ChatDB.id == chat_id).first()
         if not db_chat:
             return None
-        return Chat(
-            id=db_chat.id,
-            user_id=db_chat.user_id,
-            created_at=db_chat.created_at,
-            updated_at=db_chat.updated_at,
-            messages=[
-                Message(
-                    id=msg.id,
-                    chat_id=msg.chat_id,
-                    content=msg.content,
-                    is_ai=msg.is_ai,
-                    timestamp=msg.timestamp,
-                )
-                for msg in db_chat.messages
-            ],
-        )
+        return Chat.model_validate(db_chat)
 
-    def add_message(self, chat_id: int, user_id: int, message: Message) -> Message:
+    def get_user_chats(self, user_id: int) -> List[Chat]:
+        db_chats = self.db.query(ChatDB).filter(ChatDB.user_id == user_id).all()
+        return [Chat.model_validate(chat) for chat in db_chats]
+
+    def get_chat_messages(self, chat_id: int) -> List[Message]:
+        messages = self.db.query(MessageDB).filter(MessageDB.chat_id == chat_id).all()
+        return [Message.model_validate(msg) for msg in messages]
+
+    def create_message(self, message: MessageCreate, task_id: str | None = None) -> Message:
         db_message = MessageDB(
-            chat_id=chat_id,
-            user_id=user_id,
+            chat_id=message.chat_id,
             content=message.content,
             is_ai=message.is_ai,
+            timestamp=datetime.now(UTC),
+            task_id=task_id,
         )
         self.db.add(db_message)
         self.db.commit()
         self.db.refresh(db_message)
-        return Message(
-            id=db_message.id,
-            chat_id=db_message.chat_id,
-            content=db_message.content,
-            is_ai=db_message.is_ai,
-            timestamp=db_message.timestamp,
-        )
+        return Message.model_validate(db_message)
 
-    def get_user_chats(self, user_id: int) -> List[Chat]:
-        db_chats = self.db.query(ChatDB).filter(ChatDB.user_id == user_id).all()
-        return [
-            Chat(
-                id=chat.id,
-                user_id=chat.user_id,
-                created_at=chat.created_at,
-                updated_at=chat.updated_at,
-                messages=[
-                    Message(
-                        id=msg.id,
-                        chat_id=msg.chat_id,
-                        content=msg.content,
-                        is_ai=msg.is_ai,
-                        timestamp=msg.timestamp,
-                    )
-                    for msg in chat.messages
-                ],
-            )
-            for chat in db_chats
-        ]
-
-    def get_chat_messages(self, chat_id: int) -> List[Message]:
-        db_chat = self.db.query(ChatDB).filter(ChatDB.id == chat_id).first()
-        if not db_chat:
-            return []
-        return [
-            Message(
-                id=msg.id,
-                chat_id=msg.chat_id,
-                content=msg.content,
-                is_ai=msg.is_ai,
-                timestamp=msg.timestamp,
-            )
-            for msg in db_chat.messages
-        ]
-
-    def update_message(self, message: Message) -> Message:
-        db_message = self.db.query(MessageDB).filter(MessageDB.id == message.id).first()
-        if not db_message:
-            raise ValueError(f"Message with id {message.id} not found")
-
-        db_message.content = message.content
+    def update_message_content(self, message_id: int, content: str) -> None:
+        self.db.execute(update(MessageDB).where(MessageDB.id == message_id).values(content=content))
         self.db.commit()
-        self.db.refresh(db_message)
 
-        return Message(
-            id=db_message.id,
-            chat_id=db_message.chat_id,
-            content=db_message.content,
-            is_ai=db_message.is_ai,
-            timestamp=db_message.timestamp,
+    def delete_chats(self, chat_ids: List[int]) -> Tuple[int, int]:
+        """Delete multiple chats by their IDs. Returns tuple of (deleted_chats, deleted_messages)"""
+        if not chat_ids:
+            return (0, 0)
+
+        try:
+            with self.db.begin():
+                # Delete messages first due to foreign key constraint
+                deleted_messages = (
+                    self.db.query(MessageDB).filter(MessageDB.chat_id.in_(chat_ids)).delete(synchronize_session=False)
+                )
+
+                deleted_chats = self.db.query(ChatDB).filter(ChatDB.id.in_(chat_ids)).delete(synchronize_session=False)
+
+            return (deleted_chats, deleted_messages)
+
+        except Exception:
+            self.db.rollback()
+            raise
+
+    def get_empty_chat_ids(self, user_id: int) -> List[int]:
+        """Get IDs of all empty chats for a user"""
+        empty_chat_ids = (
+            self.db.query(ChatDB.id)
+            .outerjoin(MessageDB, ChatDB.id == MessageDB.chat_id)
+            .filter(ChatDB.user_id == user_id)
+            .group_by(ChatDB.id)
+            .having(func.count(MessageDB.id) == 0)
+            .all()
         )
+        return [chat_id for (chat_id,) in empty_chat_ids]

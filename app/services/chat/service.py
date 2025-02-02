@@ -1,5 +1,4 @@
 import uuid
-from datetime import UTC, datetime
 from typing import (
     AsyncGenerator,
     List,
@@ -7,16 +6,14 @@ from typing import (
 )
 
 from pydantic import BaseModel
-from sqlalchemy import func, update
-from sqlalchemy.orm import Session
 
 from app.config.logger import get_logger
 from app.config.redis import async_redis
-from app.db.models import ChatDB, MessageDB, UserDB
 from app.schemas.chat import Chat, Message, MessageCreate
 from app.services.ai.adapter import ChatMessage
 from app.services.ai.pipelines.base import AIResponse
 from app.services.ai.service import AIService
+from app.services.chat.repository import ChatRepository
 from app.utils.async_redis_utils.lrucache import AsyncLRUCache
 from app.utils.async_redis_utils.queue import AsyncQueue
 from app.utils.universal_serializer import safe_json_dumps
@@ -35,34 +32,17 @@ class StructuredResponse(BaseModel):
 
 
 class ChatService:
-    def __init__(self, db: Session, ai_service: AIService | None = None):
-        self.db = db
+    def __init__(self, repository: ChatRepository, ai_service: AIService | None = None):
+        self.repository = repository
         self.ai_service = ai_service or AIService()
         self.chat_cache = AsyncLRUCache("chat_history", capacity=1000, connection_manager=async_redis)
         self.message_queue = AsyncQueue("chat_messages", connection_manager=async_redis)
 
     async def create_chat(self, user_id: int) -> Chat:
-        user = self.db.query(UserDB).filter(UserDB.id == user_id).first()
-        if not user:
-            user = UserDB(
-                id=user_id,
-                username=f"user_{user_id}",
-                email=f"user_{user_id}@example.com",
-            )
-            self.db.add(user)
-            self.db.commit()
-            self.db.refresh(user)
-
-        # Create new chat
-        db_chat = ChatDB(user_id=user_id)
-        logger.info("Creating new chat: %s", db_chat)
-
-        self.db.add(db_chat)
-        self.db.commit()
-        self.db.refresh(db_chat)
-
-        logger.info("Chat created in database with id: %s", db_chat.id)
-        return Chat.model_validate(db_chat)
+        logger.info("Creating new chat for user %s", user_id)
+        chat = self.repository.create_chat(user_id)
+        logger.info("Chat created in database with id: %s", chat.id)
+        return chat
 
     async def get_chat(self, chat_id: int) -> Chat | None:
         cached_chat = await self.chat_cache.get(str(chat_id))
@@ -70,21 +50,17 @@ class ChatService:
             return Chat.model_validate(cached_chat)
 
         # If not in cache, get from DB
-        db_chat = self.db.query(ChatDB).filter(ChatDB.id == chat_id).first()
-        if not db_chat:
-            return None
-
-        chat = Chat.model_validate(db_chat)
-        await self.chat_cache.put(str(chat_id), chat.model_dump())
+        chat = self.repository.get_chat(chat_id)
+        if chat:
+            await self.chat_cache.put(str(chat_id), chat.model_dump())
         return chat
 
     async def get_user_chats(self, user_id: int) -> List[Chat]:
-        db_chats = self.db.query(ChatDB).filter(ChatDB.user_id == user_id).all()
-        return [Chat.model_validate(chat) for chat in db_chats]
+        return self.repository.get_user_chats(user_id)
 
     async def get_chat_history(self, chat_id: int) -> List[ChatMessage]:
         """Get chat history in a format suitable for AI context"""
-        messages = self.db.query(MessageDB).filter(MessageDB.chat_id == chat_id).all()
+        messages = self.repository.get_chat_messages(chat_id)
         return [{"role": "assistant" if msg.is_ai else "user", "content": msg.content} for msg in messages]
 
     async def send_message(self, message: MessageCreate) -> Message:
@@ -93,17 +69,8 @@ class ChatService:
             raise ValueError("Chat not found")
 
         # Create message
-        db_message = MessageDB(
-            chat_id=message.chat_id,
-            content=message.content,
-            is_ai=message.is_ai,
-            timestamp=datetime.now(UTC),
-        )
-        logger.debug("Creating message: %s", db_message)
-
-        self.db.add(db_message)
-        self.db.commit()
-        self.db.refresh(db_message)
+        db_message = self.repository.create_message(message)
+        logger.debug("Created message: %s", db_message)
 
         # Queue for processing if user message
         if not message.is_ai:
@@ -119,7 +86,7 @@ class ChatService:
         # Invalidate cache
         await self.chat_cache.remove(str(message.chat_id))
 
-        return Message.model_validate(db_message)
+        return db_message
 
     async def stream_ai_response(
         self,
@@ -138,17 +105,9 @@ class ChatService:
         history = await self.get_chat_history(chat_id)
         logger.debug("Got chat history with %d messages", len(history))
 
-        # Create empty AI message in DB, this will be updated when the response is streamed
-        db_message = MessageDB(
-            chat_id=chat_id,
-            content="",
-            is_ai=True,
-            timestamp=datetime.now(UTC),
-            task_id=task_id,  # Save the task_id with the message
-        )
-        self.db.add(db_message)
-        self.db.commit()
-        self.db.refresh(db_message)
+        # Create empty AI message in DB
+        message = MessageCreate(chat_id=chat_id, content="", is_ai=True)
+        db_message = self.repository.create_message(message, task_id=task_id)
         logger.info("Created initial AI message with ID %s and task_id %s", db_message.id, task_id)
 
         complete_response = ""
@@ -161,8 +120,7 @@ class ChatService:
 
             logger.info("Stream completed, updating message in DB")
             # Update message with complete response
-            self.db.execute(update(MessageDB).where(MessageDB.id == db_message.id).values(content=complete_response))
-            self.db.commit()
+            self.repository.update_message_content(db_message.id, complete_response)
             logger.info("Updated message %s with complete response (length: %d)", db_message.id, len(complete_response))
 
             await self.chat_cache.remove(str(chat_id))
@@ -172,10 +130,7 @@ class ChatService:
             if complete_response:
                 logger.info("Saving partial response before re-raising")
                 try:
-                    self.db.execute(
-                        update(MessageDB).where(MessageDB.id == db_message.id).values(content=complete_response)
-                    )
-                    self.db.commit()
+                    self.repository.update_message_content(db_message.id, complete_response)
                 except Exception:
                     logger.exception("Failed to save partial response")
             raise
@@ -192,16 +147,8 @@ class ChatService:
 
         history = await self.get_chat_history(chat_id)
 
-        db_message = MessageDB(
-            chat_id=chat_id,
-            content="",
-            is_ai=True,
-            timestamp=datetime.now(UTC),
-            task_id=task_id,
-        )
-        self.db.add(db_message)
-        self.db.commit()
-        self.db.refresh(db_message)
+        message = MessageCreate(chat_id=chat_id, content="", is_ai=True)
+        db_message = self.repository.create_message(message, task_id=task_id)
         logger.info("Created initial structured AI message with ID %s and task_id %s", db_message.id, task_id)
 
         structured_id = str(uuid.uuid4())
@@ -219,9 +166,7 @@ class ChatService:
                 )
                 yield response
                 # Update message with latest response
-                db_message.content = response.model_dump_json()
-                self.db.merge(db_message)
-                self.db.commit()
+                self.repository.update_message_content(db_message.id, response.model_dump_json())
 
         except Exception:
             # Don't need to handle partial responses as we update continuously
@@ -233,16 +178,8 @@ class ChatService:
             return
 
         try:
-            # Delete messages and chats in a transaction
-            with self.db.begin():
-                # Delete messages first due to foreign key constraint
-                deleted_messages = (
-                    self.db.query(MessageDB).filter(MessageDB.chat_id.in_(chat_ids)).delete(synchronize_session=False)
-                )
-
-                deleted_chats = self.db.query(ChatDB).filter(ChatDB.id.in_(chat_ids)).delete(synchronize_session=False)
-
-                logger.info("Deleted %d chats and %d messages", deleted_chats, deleted_messages)
+            deleted_chats, deleted_messages = self.repository.delete_chats(chat_ids)
+            logger.info("Deleted %d chats and %d messages", deleted_chats, deleted_messages)
 
             # Batch remove from cache using Redis pipeline
             async with async_redis.pipeline() as pipe:
@@ -252,31 +189,13 @@ class ChatService:
 
         except Exception as e:
             logger.error("Failed to delete chats: %s", str(e))
-            self.db.rollback()
             raise
 
     async def delete_empty_chats(self, user_id: int) -> int:
         """Delete all empty chats for a user. Returns number of chats deleted."""
-
-        # First find all empty chats using a subquery
-        empty_chat_ids = (
-            self.db.query(ChatDB.id)
-            .outerjoin(MessageDB, ChatDB.id == MessageDB.chat_id)
-            .filter(ChatDB.user_id == user_id)
-            .group_by(ChatDB.id)
-            .having(func.count(MessageDB.id) == 0)
-            .all()
-        )
-
-        # Extract the IDs
-        empty_chat_ids = [chat_id for (chat_id,) in empty_chat_ids]
+        empty_chat_ids = self.repository.get_empty_chat_ids(user_id)
 
         if empty_chat_ids:
-            self.db.query(ChatDB).filter(ChatDB.id.in_(empty_chat_ids)).delete(synchronize_session=False)
-            self.db.commit()
-
-            # Clear cache for deleted chats
-            for chat_id in empty_chat_ids:
-                await self.chat_cache.remove(str(chat_id))
+            await self.delete_chats(empty_chat_ids)
 
         return len(empty_chat_ids)

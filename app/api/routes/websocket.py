@@ -1,9 +1,8 @@
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
-from sqlalchemy.orm import Session
 
 from app.api.handlers.websocket.connection_manager import ConnectionManager
 from app.api.handlers.websocket.websocket_handler import WebSocketHandler
-from app.config.database import get_db
+from app.config.dependencies import get_chat_service
 from app.config.logger import get_logger
 from app.config.redis import async_redis
 from app.services.chat.service import ChatService
@@ -16,13 +15,10 @@ manager = ConnectionManager(async_redis)
 
 
 @ws_router.websocket("/ws/{user_id}")
-async def websocket_endpoint(websocket: WebSocket, user_id: int, db: Session = Depends(get_db)):
+async def websocket_endpoint(websocket: WebSocket, user_id: int, chat_service: ChatService = Depends(get_chat_service)):
     logger.info("New WebSocket connection request for user_id: %s", user_id)
     await manager.connect(websocket, user_id)
 
-    # Each connection needs its own instances to maintain proper isolation and resource management
-    # ChatService needs a database session (db) which should be connection-specific for proper transaction management
-    chat_service = ChatService(db)
     # WebSocketHandler is created per connection because it handles the specific websocket instance and user_id for that connection
     handler = WebSocketHandler(websocket, user_id, chat_service, manager)
     logger.info("WebSocket connection established for user_id: %s", user_id)

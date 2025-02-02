@@ -43,6 +43,41 @@ TASK_CHANNEL_PREFIX = "task_updates:"
 
 
 class BackgroundTaskProcessor:
+    # Constants for Lua scripts
+    CLEANUP_SCRIPT = """
+        local pattern = ARGV[1]
+        local cutoff_ts = ARGV[2]
+        local terminal_states = {
+            completed = true,
+            failed = true,
+            cancelled = true
+        }
+
+        local to_delete = {}
+        local cursor = "0"
+        repeat
+            local result = redis.call('SCAN', cursor, 'MATCH', pattern)
+            cursor = result[1]
+            local keys = result[2]
+
+            for _, key in ipairs(keys) do
+                local data = redis.call('GET', key)
+                if data then
+                    local success, task = pcall(cjson.decode, data)
+                    if success and terminal_states[task.status] and task.completed_at and task.completed_at < cutoff_ts then
+                        table.insert(to_delete, key)
+                    end
+                end
+            end
+        until cursor == "0"
+
+        local deleted = #to_delete
+        if deleted > 0 then
+            redis.call('DEL', unpack(to_delete))
+        end
+        return deleted
+    """
+
     def __init__(self, max_workers: int = 10, result_ttl: int = 3600):
         """
         Initialize the background task processor
@@ -65,6 +100,9 @@ class BackgroundTaskProcessor:
         self._background_tasks.register_types(SerializableTask)
         self._tasks.register_types(SerializableTask)
         self._task_to_id.register_types(SerializableTask)
+
+        # Register Lua scripts
+        self._cleanup_script = self._redis.register_script(self.CLEANUP_SCRIPT)
 
     async def _remove_task_from_set(self, task: asyncio.Task) -> None:
         """Remove a task from the background tasks set and tasks mapping"""
@@ -130,13 +168,10 @@ class BackgroundTaskProcessor:
 
         # Check if function is already async
         is_async = inspect.iscoroutinefunction(func)
-        logger.debug("Task %s is %s", task_id, "async" if is_async else "sync")
 
         # Create and start task immediately
-        if is_async:
-            coro = self._execute_async_task(task_id, func, *args, **kwargs)
-        else:
-            coro = self._execute_sync_task(task_id, func, *args, **kwargs)
+        coro_func = self._execute_async_task if is_async else self._execute_sync_task
+        coro = coro_func(task_id, func, *args, **kwargs)
 
         # Create and store task
         task = asyncio.create_task(coro, name=task_id)
@@ -181,6 +216,11 @@ class BackgroundTaskProcessor:
             except Exception as e:
                 error_msg = str(e)
                 logger.error("Error executing async task %s: %s", task_id, error_msg)
+                # Return early if event loop is closed (typically during shutdown/cleanup):
+                # 1. This happens during normal shutdown or test cleanup
+                # 2. Further async operations would fail anyway without an event loop
+                # 3. This is an infrastructure state, not a task execution error
+                # 4. Prevents cascading errors and keeps logs clean during shutdown
                 if "Event loop is closed" in error_msg:
                     return
                 await self._store_task_error(task_id, error_msg)
@@ -209,57 +249,73 @@ class BackgroundTaskProcessor:
             except Exception as e:
                 error_msg = str(e)
                 logger.error("Error executing sync task %s: %s", task_id, error_msg)
+                # Return early if event loop is closed (typically during shutdown/cleanup):
+                # 1. This happens during normal shutdown or test cleanup
+                # 2. Further async operations would fail anyway without an event loop
+                # 3. This is an infrastructure state, not a task execution error
+                # 4. Prevents cascading errors and keeps logs clean during shutdown
                 if "Event loop is closed" in error_msg:
                     return
                 await self._store_task_error(task_id, error_msg)
                 await self._update_task_status(task_id, TaskStatus.FAILED)
 
-    async def _update_task_status(self, task_id: str, status: str) -> None:
-        """Update the status of a task"""
+    async def _update_task_data(
+        self,
+        task_id: str,
+        status: str,
+        additional_data: dict[str, Any] | None = None,
+        publish_data: dict[str, Any] | None = None,
+    ) -> None:
+        """
+        Update task data in Redis and publish update
+
+        Args:
+            task_id: The ID of the task to update
+            status: New status for the task
+            additional_data: Additional fields to update in Redis
+            publish_data: Additional data to include in the published update
+        """
         task_key = self._get_task_key(task_id)
         if task_data_str := await self._redis.get(task_key):
-            task_data = json.loads(task_data_str)
-            task_data["status"] = status
-            task_data["updated_at"] = datetime.now(UTC).isoformat()
+            task_data: dict[str, Any] = json.loads(task_data_str)
+
+            # Update base fields
+            update_data = {
+                "status": status,
+                "updated_at": datetime.now(UTC).isoformat(),
+            }
+
+            # Add completion timestamp for terminal states
+            if status in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
+                update_data["completed_at"] = datetime.now(UTC).isoformat()
+
+            # Add any additional data
+            if additional_data:
+                update_data.update(additional_data)
+
+            # Update task data
+            task_data.update(update_data)
             await self._redis.set(task_key, safe_json_dumps(task_data), ex=self._result_ttl)
-            # Also publish status update
-            await self._publish_task_update(task_id, status)
+
+            # Publish update
+            await self._publish_task_update(task_id, status, publish_data)
+
+    async def _update_task_status(self, task_id: str, status: str) -> None:
+        await self._update_task_data(task_id, status)
 
     async def _store_task_result(self, task_id: str, result: Any) -> None:
-        """Store the result of a completed task and publish update"""
-        task_key = self._get_task_key(task_id)
-        if task_data_str := await self._redis.get(task_key):
-            task_data = json.loads(task_data_str)
-            task_data.update(
-                {
-                    "status": TaskStatus.COMPLETED,
-                    "result": self._serialize_result(result),
-                    "updated_at": datetime.now(UTC).isoformat(),
-                    "completed_at": datetime.now(UTC).isoformat(),
-                }
-            )
-            await self._redis.set(task_key, safe_json_dumps(task_data), ex=self._result_ttl)
-
-            # Publish update
-            await self._publish_task_update(task_id, TaskStatus.COMPLETED, {"result": self._serialize_result(result)})
+        serialized_result = self._serialize_result(result)
+        await self._update_task_data(
+            task_id,
+            TaskStatus.COMPLETED,
+            additional_data={"result": serialized_result},
+            publish_data={"result": serialized_result},
+        )
 
     async def _store_task_error(self, task_id: str, error: str) -> None:
-        """Store error information for a failed task and publish update"""
-        task_key = self._get_task_key(task_id)
-        if task_data_str := await self._redis.get(task_key):
-            task_data = json.loads(task_data_str)
-            task_data.update(
-                {
-                    "status": TaskStatus.FAILED,
-                    "error": error,
-                    "updated_at": datetime.now(UTC).isoformat(),
-                    "completed_at": datetime.now(UTC).isoformat(),
-                }
-            )
-            await self._redis.set(task_key, safe_json_dumps(task_data), ex=self._result_ttl)
-
-            # Publish update
-            await self._publish_task_update(task_id, TaskStatus.FAILED, {"error": error})
+        await self._update_task_data(
+            task_id, TaskStatus.FAILED, additional_data={"error": error}, publish_data={"error": error}
+        )
 
     async def get_task_result(self, task_id: str) -> TaskData | None:
         """Get the current status and result of a task"""
@@ -276,7 +332,7 @@ class BackgroundTaskProcessor:
         logger.info("Attempting to cancel task %s", task_id)
         task_key = self._get_task_key(task_id)
         if task_data_str := await self._redis.get(task_key):
-            task_data = json.loads(task_data_str)
+            task_data: dict[str, Any] = json.loads(task_data_str)
             # Only allow cancelling pending or running tasks
             if task_data["status"] not in [TaskStatus.PENDING, TaskStatus.RUNNING]:
                 logger.debug("Cannot cancel task %s in status %s", task_id, task_data["status"])
@@ -299,48 +355,23 @@ class BackgroundTaskProcessor:
         """
         Clean up completed/failed/cancelled tasks older than max_age
         Returns number of tasks cleaned up
+
+        Uses Redis server-side Lua scripting for better performance:
+        1. Reducing network round trips
+        2. Avoiding JSON deserialization of task data on the Python side
+        3. Processing deletion in a single atomic operation
         """
         max_age = max_age if max_age is not None else timedelta(seconds=self._result_ttl)
-        cleaned = 0
-
-        # Get all task keys
+        cutoff_timestamp = (datetime.now(UTC) - max_age).isoformat()
         pattern = f"{TASK_KEY_PREFIX}*"
-        cursor = 0
-        while True:
-            cursor, keys = await self._redis.scan(cursor, match=pattern)
-            if not keys:
-                if cursor == 0:
-                    break
-                continue
 
-            # Get all task data at once
-            task_data_list = await self._redis.mget(keys)
-            keys_to_delete = []
-
-            for key, task_data_str in zip(keys, task_data_list, strict=False):
-                if not task_data_str:
-                    continue
-
-                task_data = json.loads(task_data_str)
-                completed_at = task_data.get("completed_at")
-                if completed_at is None:
-                    continue
-
-                completed_dt = datetime.fromisoformat(completed_at)
-                age = datetime.now(UTC) - completed_dt
-
-                if (
-                    task_data["status"] in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]
-                    and age > max_age
-                ):
-                    keys_to_delete.append(key)
-
-            # Delete keys in batches
-            if keys_to_delete:
-                await self._redis.delete(*keys_to_delete)
-                cleaned += len(keys_to_delete)
-
-            if cursor == 0:
-                break
-
-        return cleaned
+        try:
+            # Execute the pre-registered cleanup script
+            cleaned = await self._cleanup_script(
+                keys=[],  # no KEYS used in our script
+                args=[pattern, cutoff_timestamp],  # ARGV values
+            )
+            return int(cleaned)
+        except Exception as e:
+            logger.error("Error during task cleanup: %s", str(e))
+            return 0

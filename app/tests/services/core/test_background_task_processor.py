@@ -183,7 +183,8 @@ async def test_cleanup_old_tasks(task_processor: BackgroundTaskProcessor):
     # Verify tasks are in the correct state
     task1_data = await task_processor.get_task_result(task_id1)
     task2_data = await task_processor.get_task_result(task_id2)
-    assert task1_data is not None and task2_data is not None
+    assert task1_data is not None
+    assert task2_data is not None
     task1_data = cast(TaskData, task1_data)
     task2_data = cast(TaskData, task2_data)
     assert task1_data["status"] == TaskStatus.COMPLETED
