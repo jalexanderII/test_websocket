@@ -11,7 +11,7 @@ from app.config.logger import get_logger
 from app.config.redis import async_redis
 from app.schemas.chat import Chat, Message, MessageCreate
 from app.services.ai.adapter import ChatMessage
-from app.services.ai.pipelines.base import AIResponse
+from app.services.ai.pipelines.base import AIResponse, AIResponseType
 from app.services.ai.service import AIService
 from app.services.chat.repository import ChatRepository
 from app.utils.async_redis_utils.lrucache import AsyncLRUCache
@@ -161,7 +161,7 @@ class ChatService:
             ):
                 response = AIResponse(
                     content=safe_json_dumps(stream_struc),
-                    response_type="structured",
+                    response_type=AIResponseType.STRUCTURED,
                     metadata={"structured_id": structured_id},
                 )
                 yield response
@@ -199,3 +199,32 @@ class ChatService:
             await self.delete_chats(empty_chat_ids)
 
         return len(empty_chat_ids)
+
+    def _generate_title_from_message(self, message: str) -> str:
+        """Generate a title from the first message by taking first letter of each word"""
+        # Split message into words and take first letter of each word
+        words = [word.strip() for word in message.split() if word.strip()]
+        if not words:
+            return "New Chat"
+
+        # Take first letter of each word, uppercase it, and join
+        title = "".join(word[0].upper() for word in words if word)
+        # If title would be too long, limit it
+        return title[:20] if len(title) > 20 else title
+
+    async def update_chat_title(self, chat_id: int, message: str) -> str | None:
+        """Update chat title if it doesn't already have one. Returns the new title if created, None otherwise."""
+        chat = await self.get_chat(chat_id)
+        if not chat:
+            logger.warning("Attempted to update title for non-existent chat: %s", chat_id)
+            return None
+
+        if not chat.title:  # Only update if chat doesn't have a title
+            title = self._generate_title_from_message(message)
+            self.repository.update_chat_title(chat_id, title)
+            # Invalidate cache since we updated the chat
+            await self.chat_cache.remove(str(chat_id))
+            logger.info("Updated chat %s title to: %s", chat_id, title)
+            return title
+
+        return None

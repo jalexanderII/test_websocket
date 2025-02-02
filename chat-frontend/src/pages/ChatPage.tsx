@@ -84,6 +84,21 @@ export default function ChatPage() {
           fetchChatHistory();
           break;
         }
+        case 'update_title': {
+          console.log('[WebSocket] Received title update:', data);
+          setChats(prev => {
+            console.log('[Chat] Current chats before update:', prev);
+            const updated = prev.map(chat => 
+              chat.id === data.chat_id 
+                ? { ...chat, title: data.title }
+                : chat
+            );
+            console.log('[Chat] Updated chats:', updated);
+            return updated;
+          });
+          fetchChatHistory();
+          break;
+        }
         case 'chat_joined': {
           console.log('[WebSocket] Successfully joined chat:', data.chat_id);
           setCurrentChatId(data.chat_id);
@@ -705,7 +720,17 @@ export default function ChatPage() {
       <div className="flex-1 flex flex-col h-screen">
         <div className="border-b p-4">
           <div className="flex items-center justify-between">
-            <CardTitle className="text-2xl">Chat Interface</CardTitle>
+            <CardTitle className="text-2xl">
+              {(() => {
+                const currentChat = chats.find(c => c.id === currentChatId);
+                console.log('[Chat] Rendering header title:', {
+                  currentChatId,
+                  currentChat,
+                  allChats: chats
+                });
+                return currentChat?.title || "Chat Interface";
+              })()}
+            </CardTitle>
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               {isStreaming && (
                 <>

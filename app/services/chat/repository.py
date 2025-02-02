@@ -99,3 +99,8 @@ class ChatRepository:
             .all()
         )
         return [chat_id for (chat_id,) in empty_chat_ids]
+
+    def update_chat_title(self, chat_id: int, title: str) -> None:
+        """Update the title of a chat"""
+        self.db.execute(update(ChatDB).where(ChatDB.id == chat_id).values(title=title))
+        self.db.commit()

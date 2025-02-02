@@ -89,6 +89,12 @@ class WebSocketHandler:
             user_message = await self.chat_service.send_message(message_create)
             await self._broadcast_user_message(user_message)
 
+            # Update chat title if this is the first message - run in background
+            title_process_id = await background_processor.add_task(
+                self.update_title_wrapper, message.chat_id, message.content
+            )
+            logger.info("[WebSocket] Created title update task: %s", title_process_id)
+
             # Get chat history for context
             history = await self.chat_service.get_chat_history(message.chat_id)
             logger.info("[WebSocket] Retrieved chat history, starting pipeline processing")
@@ -106,7 +112,8 @@ class WebSocketHandler:
             process_task_id = await background_processor.add_task(process_pipeline_wrapper)
 
             logger.info("[WebSocket] Created pipeline task: %s", process_task_id)
-            # Monitor the background task
+            # Monitor both tasks
+            await self._monitor_task(title_process_id)
             await self._monitor_task(process_task_id)
 
         except Exception as e:
@@ -215,26 +222,32 @@ class WebSocketHandler:
 
             # If there's an initial message, send it and get AI response
             if message.initial_message:
+                initial_message = message.initial_message  # Ensure it's not None for type checking
                 # Send initial message
                 message_task_id = await background_processor.add_task(
-                    self._handle_initial_message, chat_id, message.initial_message or ""
+                    self._handle_initial_message, chat_id, initial_message
                 )
                 await self._monitor_task(message_task_id)
+
+                # Update chat title for initial message
+
+                title_process_id = await background_processor.add_task(
+                    self.update_title_wrapper, chat_id, initial_message
+                )
+                logger.info("[WebSocket] Created title update task: %s", title_process_id)
+                await self._monitor_task(title_process_id)
 
                 # Get chat history for context
                 history = await self.chat_service.get_chat_history(chat_id)
                 logger.info("[WebSocket] Retrieved chat history, starting pipeline processing")
 
-                # Start pipeline processing in background
-                pipeline_task_id = str(uuid.uuid4())
-
                 # Start pipeline processing in background with standard type
                 async def process_pipeline_wrapper():
                     return await self._process_pipeline_message(
-                        message=message.initial_message or "",
+                        message=initial_message,
                         history=history,
                         chat_id=chat_id,
-                        task_id=pipeline_task_id,
+                        task_id=str(uuid.uuid4()),
                     )
 
                 ai_task_id = await background_processor.add_task(process_pipeline_wrapper)
@@ -243,6 +256,18 @@ class WebSocketHandler:
         except Exception as e:
             logger.exception("Error creating chat")
             await self._send_error(str(e))
+
+    async def update_title_wrapper(self, chat_id: int, initial_message: str):
+        logger.info("[WebSocket] Attempting to update chat title for chat %s", chat_id)
+        title = await self.chat_service.update_chat_title(chat_id, initial_message)
+        logger.info("[WebSocket] Title update result: %s", title)
+        if title:  # Only broadcast if we got a new title
+            logger.info("[WebSocket] Broadcasting title update: chat_id=%s, title=%s", chat_id, title)
+            await self.manager.broadcast_to_user(
+                self.user_id,
+                safe_json_dumps({"type": "update_title", "chat_id": chat_id, "title": title}),
+            )
+        return {"title": title}
 
     async def _handle_initial_message(self, chat_id: int, content: str) -> None:
         """Handle sending the initial message in a new chat"""
