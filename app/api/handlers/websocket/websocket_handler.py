@@ -8,18 +8,19 @@ from pydantic import ValidationError
 
 from app.api.handlers.websocket.connection_manager import ConnectionManager
 from app.config.logger import get_logger
+from app.config.settings import settings
 from app.schemas.chat import Message, MessageCreate
 from app.schemas.websocket import CreateChatMessage, JoinChatMessage, SendMessageRequest
 from app.services.ai.adapter import ChatMessage
 from app.services.ai.pipelines.manager import PipelineManager
 from app.services.chat.service import ChatService
-from app.services.core.background_task_processor import BackgroundTaskProcessor, TaskStatus
+from app.services.core.background_task_processor import BackgroundTaskProcessor, TaskData, TaskStatus
 from app.utils.universal_serializer import safe_json_dumps
 
 logger = get_logger(__name__)
 
 
-background_processor = BackgroundTaskProcessor(max_workers=5)
+background_processor = BackgroundTaskProcessor(max_workers=settings.BACKGROUND_TASK_PROCESSOR_MAX_WORKERS)
 
 
 class WebSocketHandler:
@@ -343,68 +344,126 @@ class WebSocketHandler:
             # If we can't send the error, just log it
             pass
 
-    async def _monitor_task(self, task_id: str) -> None:
-        """Monitor a background task and send updates"""
+    async def _handle_task_update(self, task_data: TaskData) -> None:
+        """Handle a task update from Redis"""
         try:
-            while True:
-                # Wait for task to be ready
-                await asyncio.sleep(0.1)
+            status = task_data.get("status")
+            task_id = task_data.get("task_id", "")  # Ensure we have a string for task_id
 
+            if status == TaskStatus.COMPLETED:
+                await self.manager.broadcast_to_user(
+                    self.user_id,
+                    safe_json_dumps(
+                        {
+                            "type": "task_completed",
+                            "task_id": task_id,
+                            "result": task_data.get("result", {}),
+                        }
+                    ),
+                )
+            elif status == TaskStatus.FAILED:
+                await self.manager.broadcast_to_user(
+                    self.user_id,
+                    safe_json_dumps(
+                        {
+                            "type": "task_failed",
+                            "task_id": task_id,
+                            "error": task_data.get("error", "Unknown error"),
+                        }
+                    ),
+                )
+            elif status == TaskStatus.CANCELLED:
+                await self.manager.broadcast_to_user(
+                    self.user_id, safe_json_dumps({"type": "task_cancelled", "task_id": task_id})
+                )
+        except Exception as e:
+            logger.exception("Error handling task update")
+            await self._send_error(str(e))
+
+    async def _monitor_task(self, task_id: str, timeout_seconds: float = 30.0) -> None:
+        """Monitor a background task using Redis pub/sub
+
+        Args:
+            task_id: The ID of the task to monitor
+            timeout_seconds: Maximum time to wait for task completion in seconds
+        """
+        try:
+            # Get Redis pubsub connection from background processor
+            pubsub = await background_processor.subscribe_to_task_updates(task_id)
+
+            try:
+                # Set timeout
+                start_time = asyncio.get_event_loop().time()
+
+                # Check initial status in case task completed before we subscribed
                 task_data = await background_processor.get_task_result(task_id)
-                if not task_data:
-                    logger.error("Task %s not found", task_id)
-                    await self._send_error(f"Task {task_id} not found")
-                    break
+                if task_data and task_data["status"] in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
+                    await self._handle_task_update(task_data)
+                    return
 
-                status = task_data.get("status")
-                if not status:
-                    logger.error("Task %s has no status", task_id)
-                    break
+                # Wait for updates
+                while True:
+                    # Check timeout
+                    if asyncio.get_event_loop().time() - start_time >= timeout_seconds:
+                        logger.warning("Task %s monitoring timed out after %.1f seconds", task_id, timeout_seconds)
+                        await self.manager.broadcast_to_user(
+                            self.user_id,
+                            safe_json_dumps(
+                                {
+                                    "type": "task_timeout",
+                                    "task_id": task_id,
+                                    "message": f"Task monitoring timed out after {timeout_seconds} seconds",
+                                }
+                            ),
+                        )
+                        break
 
-                if status == TaskStatus.COMPLETED:
-                    # Task completed successfully
-                    # Ensure result is JSON serializable
-                    result = safe_json_dumps(task_data.get("result", {}))
-                    await self.manager.broadcast_to_user(
-                        self.user_id,
-                        safe_json_dumps(
-                            {
-                                "type": "task_completed",
-                                "task_id": task_id,
-                                "result": result,
-                            }
-                        ),
-                    )
-                    break
-                elif status == TaskStatus.FAILED:
-                    # Task failed
-                    error = task_data.get("error", "Unknown error")
-                    await self.manager.broadcast_to_user(
-                        self.user_id,
-                        safe_json_dumps(
-                            {
-                                "type": "task_failed",
-                                "task_id": task_id,
-                                "error": str(error),
-                            }
-                        ),
-                    )
-                    break
-                elif status == TaskStatus.CANCELLED:
-                    # Task was cancelled
-                    await self.manager.broadcast_to_user(
-                        self.user_id,
-                        safe_json_dumps(
-                            {
-                                "type": "task_cancelled",
-                                "task_id": task_id,
-                            }
-                        ),
-                    )
-                    break
+                    # Wait for message with timeout
+                    message = await pubsub.get_message(timeout=1.0)
 
-                # Continue monitoring if task is still running
-                await asyncio.sleep(0.1)
+                    if message and message["type"] == "message":
+                        try:
+                            data = json.loads(message["data"])
+                            status = data.get("status")
+
+                            # Handle different status updates
+                            if status == TaskStatus.COMPLETED:
+                                await self.manager.broadcast_to_user(
+                                    self.user_id,
+                                    safe_json_dumps(
+                                        {
+                                            "type": "task_completed",
+                                            "task_id": task_id,
+                                            "result": data.get("data", {}).get("result", {}),
+                                        }
+                                    ),
+                                )
+                                break
+                            elif status == TaskStatus.FAILED:
+                                await self.manager.broadcast_to_user(
+                                    self.user_id,
+                                    safe_json_dumps(
+                                        {
+                                            "type": "task_failed",
+                                            "task_id": task_id,
+                                            "error": data.get("data", {}).get("error", "Unknown error"),
+                                        }
+                                    ),
+                                )
+                                break
+                            elif status == TaskStatus.CANCELLED:
+                                await self.manager.broadcast_to_user(
+                                    self.user_id, safe_json_dumps({"type": "task_cancelled", "task_id": task_id})
+                                )
+                                break
+                        except json.JSONDecodeError:
+                            logger.warning("Failed to decode message data: %s", message["data"])
+                            continue
+
+            finally:
+                # Always unsubscribe and close connection
+                await pubsub.unsubscribe()
+                await pubsub.close()
 
         except Exception as e:
             logger.exception("Error monitoring task %s", task_id)

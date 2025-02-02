@@ -1,16 +1,18 @@
 import os
-from typing import Generator
+from typing import AsyncGenerator
 from unittest.mock import patch
 
 import pytest
-import redis
+import pytest_asyncio
 from fastapi.testclient import TestClient
+from redis.asyncio import Redis
 from redis_data_structures import ConnectionManager
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.config.database import Base, get_db
+from app.config.redis import async_redis
 from app.main import app
 
 # Create in-memory SQLite database for testing
@@ -62,14 +64,14 @@ def redis_config() -> dict:
     }
 
 
-@pytest.fixture(scope="session")
-def redis_client(redis_config: dict) -> Generator[redis.Redis, None, None]:
+@pytest_asyncio.fixture
+async def redis_client() -> AsyncGenerator[Redis, None]:
     """Create a Redis client for testing."""
-    client = redis.Redis(**redis_config)
     try:
-        yield client
+        await async_redis.ping()
+        yield async_redis
     finally:
-        client.close()
+        await async_redis.aclose()
 
 
 @pytest.fixture(scope="session")
@@ -78,12 +80,12 @@ def connection_manager(redis_config: dict) -> ConnectionManager:
     return ConnectionManager(**redis_config)
 
 
-@pytest.fixture(autouse=True)
-def clean_redis(redis_client: redis.Redis) -> Generator[None, None, None]:
+@pytest_asyncio.fixture(autouse=True)
+async def clean_redis(redis_client: Redis) -> AsyncGenerator[None, None]:
     """Clean Redis database before and after each test."""
-    redis_client.flushdb()
+    await redis_client.flushdb()
     yield
-    redis_client.flushdb()
+    await redis_client.flushdb()
 
 
 @pytest.fixture(autouse=True)

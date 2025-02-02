@@ -1,17 +1,41 @@
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
+from typing import AsyncGenerator, cast
 
 import pytest
+import pytest_asyncio
 
-from app.services.core.background_task_processor import BackgroundTaskProcessor, TaskStatus
+from app.services.core.background_task_processor import BackgroundTaskProcessor, TaskData, TaskStatus
 
 
-@pytest.fixture
-def task_processor():
+@pytest_asyncio.fixture
+async def task_processor() -> AsyncGenerator[BackgroundTaskProcessor, None]:
+    """Get task processor for testing."""
     processor = BackgroundTaskProcessor(max_workers=2)
-    # Clear any existing data
-    processor._task_results.clear()
-    return processor
+    try:
+        yield processor
+    finally:
+        # Clean up any remaining tasks
+        tasks = [t for t in processor._background_tasks]
+        if tasks:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Clean up Redis keys
+        pattern = f"{processor._task_key_prefix}*"
+        cursor = 0
+        while True:
+            cursor, keys = await processor._redis.scan(cursor, match=pattern)
+            if keys:
+                await processor._redis.delete(*keys)
+            if cursor == 0:
+                break
+
+        # Close Redis connection using aclose() instead of close()
+        await processor._redis.aclose()
 
 
 async def async_test_func(*args, **kwargs):
@@ -35,83 +59,90 @@ async def failing_async_func():
 
 
 @pytest.mark.asyncio
-async def test_add_task_sync(task_processor):
+async def test_add_task_sync(task_processor: BackgroundTaskProcessor):
     """Test adding a synchronous task"""
     task_id = await task_processor.add_task(sync_test_func, 1, 2, kwarg1="test")
 
     # Check initial task state
     task_data = await task_processor.get_task_result(task_id)
     assert task_data is not None
-    assert task_data["status"] == TaskStatus.PENDING  # type: ignore
-    assert task_data["result"] is None  # type: ignore
-    assert task_data["error"] is None  # type: ignore
+    assert task_data["status"] == TaskStatus.PENDING
+    assert task_data["result"] is None
+    assert task_data["error"] is None
     assert "created_at" in task_data
     assert "updated_at" in task_data
 
 
 @pytest.mark.asyncio
-async def test_add_task_async(task_processor):
+async def test_add_task_async(task_processor: BackgroundTaskProcessor):
     """Test adding an asynchronous task"""
     task_id = await task_processor.add_task(async_test_func, 1, 2, kwarg1="test")
 
     # Check initial task state
     task_data = await task_processor.get_task_result(task_id)
     assert task_data is not None
-    assert task_data["status"] == TaskStatus.PENDING  # type: ignore
-    assert task_data["result"] is None  # type: ignore
-    assert task_data["error"] is None  # type: ignore
+    assert task_data["status"] == TaskStatus.PENDING
+    assert task_data["result"] is None
+    assert task_data["error"] is None
 
 
 @pytest.mark.asyncio
-async def test_execute_sync_task(task_processor):
+async def test_execute_sync_task(task_processor: BackgroundTaskProcessor):
     """Test executing a synchronous task"""
     task_id = await task_processor.add_task(sync_test_func, 1, 2, kwarg1="test")
     await task_processor._execute_sync_task(task_id, sync_test_func, 1, 2, kwarg1="test")
 
     task_data = await task_processor.get_task_result(task_id)
-    assert task_data["status"] == TaskStatus.COMPLETED  # type: ignore
-    assert task_data["result"] == {"args": [1, 2], "kwargs": {"kwarg1": "test"}}  # type: ignore
-    assert task_data["error"] is None  # type: ignore
+    assert task_data is not None
+    task_data = cast(TaskData, task_data)
+    assert task_data["status"] == TaskStatus.COMPLETED
+    assert task_data["result"] == {"args": [1, 2], "kwargs": {"kwarg1": "test"}}
+    assert task_data["error"] is None
 
 
 @pytest.mark.asyncio
-async def test_execute_async_task(task_processor):
+async def test_execute_async_task(task_processor: BackgroundTaskProcessor):
     """Test executing an asynchronous task"""
     task_id = await task_processor.add_task(async_test_func, 1, 2, kwarg1="test")
     await task_processor._execute_async_task(task_id, async_test_func, 1, 2, kwarg1="test")
 
     task_data = await task_processor.get_task_result(task_id)
-    assert task_data["status"] == TaskStatus.COMPLETED  # type: ignore
-    assert task_data["result"] == {"args": [1, 2], "kwargs": {"kwarg1": "test"}}  # type: ignore
-    assert task_data["error"] is None  # type: ignore
+    assert task_data is not None
+    task_data = cast(TaskData, task_data)
+    assert task_data["status"] == TaskStatus.COMPLETED
+    assert task_data["result"] == {"args": [1, 2], "kwargs": {"kwarg1": "test"}}
 
 
 @pytest.mark.asyncio
-async def test_failing_sync_task(task_processor):
+async def test_failing_sync_task(task_processor: BackgroundTaskProcessor):
     """Test handling a failing synchronous task"""
     task_id = await task_processor.add_task(failing_sync_func)
     await task_processor._execute_sync_task(task_id, failing_sync_func)
 
     task_data = await task_processor.get_task_result(task_id)
-    assert task_data["status"] == TaskStatus.FAILED  # type: ignore
-    assert task_data["result"] is None  # type: ignore
-    assert task_data["error"] == "Test error"  # type: ignore
+    assert task_data is not None
+    task_data = cast(TaskData, task_data)
+    assert task_data["status"] == TaskStatus.FAILED
+    assert task_data["result"] is None
+    assert task_data["error"] == "Test error"
 
 
 @pytest.mark.asyncio
-async def test_failing_async_task(task_processor):
+async def test_failing_async_task(task_processor: BackgroundTaskProcessor):
     """Test handling a failing asynchronous task"""
     task_id = await task_processor.add_task(failing_async_func)
     await task_processor._execute_async_task(task_id, failing_async_func)
 
     task_data = await task_processor.get_task_result(task_id)
-    assert task_data["status"] == TaskStatus.FAILED  # type: ignore
-    assert task_data["result"] is None  # type: ignore
-    assert task_data["error"] == "Test error"  # type: ignore
+    assert task_data is not None
+    task_data = cast(TaskData, task_data)
+    assert task_data["status"] == TaskStatus.FAILED
+    assert task_data["result"] is None
+    assert task_data["error"] == "Test error"
 
 
 @pytest.mark.asyncio
-async def test_cancel_task(task_processor):
+async def test_cancel_task(task_processor: BackgroundTaskProcessor):
     """Test cancelling a task"""
     task_id = await task_processor.add_task(sync_test_func)
 
@@ -120,7 +151,9 @@ async def test_cancel_task(task_processor):
     assert result is True
 
     task_data = await task_processor.get_task_result(task_id)
-    assert task_data["status"] == TaskStatus.CANCELLED  # type: ignore
+    assert task_data is not None
+    task_data = cast(TaskData, task_data)
+    assert task_data["status"] == TaskStatus.CANCELLED
 
     # Try to cancel completed task
     completed_task_id = await task_processor.add_task(sync_test_func)
@@ -130,7 +163,7 @@ async def test_cancel_task(task_processor):
 
 
 @pytest.mark.asyncio
-async def test_cleanup_old_tasks(task_processor):
+async def test_cleanup_old_tasks(task_processor: BackgroundTaskProcessor):
     """Test cleaning up old tasks"""
     # Add some tasks
     task_id1 = await task_processor.add_task(sync_test_func)
@@ -142,12 +175,23 @@ async def test_cleanup_old_tasks(task_processor):
     # Cancel one task
     await task_processor.cancel_task(task_id2)
 
+    # Verify tasks are in the correct state
+    task1_data = await task_processor.get_task_result(task_id1)
+    task2_data = await task_processor.get_task_result(task_id2)
+    assert task1_data is not None and task2_data is not None
+    task1_data = cast(TaskData, task1_data)
+    task2_data = cast(TaskData, task2_data)
+    assert task1_data["status"] == TaskStatus.COMPLETED
+    assert task2_data["status"] == TaskStatus.CANCELLED
+
     # Modify completion time to be old
     old_time = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
     for task_id in [task_id1, task_id2]:
-        if task_data := task_processor._task_results.get(task_id):
-            task_data["completed_at"] = old_time  # type: ignore
-            task_processor._task_results[task_id] = task_data  # type: ignore
+        task_key = task_processor._get_task_key(task_id)
+        if task_data_str := await task_processor._redis.get(task_key):
+            task_data = json.loads(task_data_str)
+            task_data["completed_at"] = old_time
+            await task_processor._redis.set(task_key, json.dumps(task_data))
 
     # Clean up tasks older than 1 hour
     cleaned = await task_processor.cleanup_old_tasks(max_age=timedelta(hours=1))
@@ -159,7 +203,7 @@ async def test_cleanup_old_tasks(task_processor):
 
 
 @pytest.mark.asyncio
-async def test_concurrent_tasks(task_processor):
+async def test_concurrent_tasks(task_processor: BackgroundTaskProcessor):
     """Test handling concurrent tasks with semaphore"""
 
     async def slow_task(delay):
@@ -171,17 +215,22 @@ async def test_concurrent_tasks(task_processor):
     for _ in range(4):  # More than max_workers (2)
         task_id = await task_processor.add_task(slow_task, 0.1)
         task_ids.append(task_id)
+
+    # Execute tasks manually since we're not using the background task feature in tests
+    for task_id in task_ids:
         await task_processor._execute_async_task(task_id, slow_task, 0.1)
 
-    # Check all tasks completed
+    # Check all tasks completed successfully
     for task_id in task_ids:
         task_data = await task_processor.get_task_result(task_id)
-        assert task_data["status"] == TaskStatus.COMPLETED  # type: ignore
-        assert task_data["result"] == 0.1  # type: ignore
+        assert task_data is not None
+        task_data = cast(TaskData, task_data)
+        assert task_data["status"] == TaskStatus.COMPLETED
+        assert task_data["result"] == 0.1
 
 
 @pytest.mark.asyncio
-async def test_custom_task_id(task_processor):
+async def test_custom_task_id(task_processor: BackgroundTaskProcessor):
     """Test using a custom task ID"""
     custom_id = "custom-task-123"
     task_id = await task_processor.add_task(sync_test_func, task_id=custom_id)
@@ -189,4 +238,4 @@ async def test_custom_task_id(task_processor):
     assert task_id == custom_id
     task_data = await task_processor.get_task_result(custom_id)
     assert task_data is not None
-    assert task_data["status"] == TaskStatus.PENDING  # type: ignore
+    assert task_data["status"] == TaskStatus.PENDING

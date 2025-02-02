@@ -45,6 +45,9 @@ class Settings:
     REDIS_CB_TIMEOUT_MINS = int(os.getenv("REDIS_CB_TIMEOUT_MINS", "5"))
     REDIS_SSL = os.getenv("REDIS_SSL", "false").lower() == "true"
 
+    # Background Task Processor
+    BACKGROUND_TASK_PROCESSOR_MAX_WORKERS = int(os.getenv("MAX_WORKERS", (os.cpu_count() or 1) * 5))
+
     @property
     def fastapi_kwargs(self) -> dict[str, bool | str | None]:
         """
