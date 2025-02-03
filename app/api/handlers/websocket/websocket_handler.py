@@ -280,13 +280,15 @@ class WebSocketHandler:
     async def handle_join_chat(self, message: JoinChatMessage):
         try:
             logger.info("[WebSocket] Starting join chat process for chat: %s", message.chat_id)
+
             # Verify chat exists in background
             task_id = await background_processor.add_task(self.chat_service.get_chat, message.chat_id)
             logger.info("[WebSocket] Created background task %s for joining chat", task_id)
 
             # Monitor task completion with timeout
-            max_retries = 10
+            max_retries = 3  # Reduced from 10 to minimize concurrent requests
             retry_count = 0
+
             while retry_count < max_retries:
                 task_data = await background_processor.get_task_result(task_id)
                 logger.debug("[WebSocket] Join chat task data: %s", task_data)
@@ -306,15 +308,19 @@ class WebSocketHandler:
                         raise ValueError("Chat not found")
 
                     logger.info("[WebSocket] Successfully joined chat: %s", message.chat_id)
-                    await self.manager.broadcast_to_user(
-                        self.user_id,
-                        safe_json_dumps(
-                            {
-                                "type": "chat_joined",
-                                "chat_id": message.chat_id,
-                            }
-                        ),
-                    )
+                    try:
+                        await self.manager.broadcast_to_user(
+                            self.user_id,
+                            safe_json_dumps(
+                                {
+                                    "type": "chat_joined",
+                                    "chat_id": message.chat_id,
+                                }
+                            ),
+                        )
+                    except Exception as e:
+                        logger.error("[WebSocket] Failed to broadcast chat joined message: %s", str(e))
+                        # Don't re-raise, as we've already joined the chat
                     return
                 elif status in [TaskStatus.FAILED, TaskStatus.CANCELLED]:
                     error = task_data.get("error", "Unknown error")
@@ -329,7 +335,11 @@ class WebSocketHandler:
 
         except Exception as e:
             logger.exception("[WebSocket] Error joining chat")
-            await self._send_error(str(e))
+            try:
+                await self._send_error(str(e))
+            except Exception:
+                logger.exception("[WebSocket] Failed to send error message")
+                # If we can't send the error, just log it
 
     async def _broadcast_user_message(self, message: Message) -> None:
         """Broadcast a user message to all connected clients"""

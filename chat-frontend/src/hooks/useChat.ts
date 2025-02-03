@@ -6,14 +6,17 @@ import {
 	selectedChatsAtom,
 	streamingAtom,
 } from "@/store/chat/atoms";
+import type { Message } from "@/types/chat";
 import type { ConnectionHealth } from "@/types/websocket";
 import { formatAPIMessage } from "@/utils/messageFormatters";
 import { useAtom } from "jotai";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 export function useChat(userId: string) {
 	const navigate = useNavigate();
+	const chatCacheRef = useRef<Map<number, { messages: Message[], lastFetched: number }>>(new Map());
+	const loadingRef = useRef<Set<number>>(new Set());
 
 	const [isStreaming, setIsStreaming] = useAtom(streamingAtom);
 	const [messages, setMessages] = useAtom(messagesAtom);
@@ -37,13 +40,42 @@ export function useChat(userId: string) {
 
 	const loadChat = useCallback(
 		async (chatId: number) => {
+			// Don't load if already loading
+			if (loadingRef.current.has(chatId)) {
+				return;
+			}
+
 			try {
+				// Check cache first
+				const cached = chatCacheRef.current.get(chatId);
+				const now = Date.now();
+				if (cached && (now - cached.lastFetched) < 5000) { // 5 second cache
+					setMessages(cached.messages);
+					setCurrentChatId(chatId);
+					return;
+				}
+
+				// Mark as loading
+				loadingRef.current.add(chatId);
+
 				const chat = await chatApi.fetchChat(chatId);
 				const formattedMessages = chat.messages.map(formatAPIMessage);
-				setMessages(formattedMessages);
-				setCurrentChatId(chatId);
+				
+				// Update cache
+				chatCacheRef.current.set(chatId, {
+					messages: formattedMessages,
+					lastFetched: now
+				});
+
+				// Only update state if this is still the current request
+				if (loadingRef.current.has(chatId)) {
+					setMessages(formattedMessages);
+					setCurrentChatId(chatId);
+				}
 			} catch (error) {
 				console.error("Error loading chat:", error);
+			} finally {
+				loadingRef.current.delete(chatId);
 			}
 		},
 		[setMessages, setCurrentChatId],
@@ -58,6 +90,11 @@ export function useChat(userId: string) {
 				setCurrentChatId(null);
 				setMessages([]);
 				navigate("/");
+			}
+
+			// Clear cache for deleted chats
+			for (const chatId of selectedChats) {
+				chatCacheRef.current.delete(chatId);
 			}
 
 			setSelectedChats(new Set());
@@ -77,7 +114,6 @@ export function useChat(userId: string) {
 			}
 		} catch (error) {
 			console.error("Error cleaning up empty chats:", error);
-			// Don't rethrow - this is a background cleanup task
 		}
 	}, [userId, fetchChatHistory]);
 

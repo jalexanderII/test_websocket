@@ -12,7 +12,7 @@ import {
 	createErrorMessage,
 	createStreamingMessage,
 } from "@/utils/messageFormatters";
-import { useCallback } from "react";
+import { useCallback, useRef, useEffect } from "react";
 import { useWebSocketService } from "./useWebSocketService";
 
 interface UseChatWebSocketProps {
@@ -35,6 +35,8 @@ export function useChatWebSocket({
 	setConnectionHealth,
 }: UseChatWebSocketProps) {
 	const ws = WebSocketService.getInstance();
+	const joinChatTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+	const lastJoinedChatRef = useRef<number | null>(null);
 
 	const handleMessage = useCallback(
 		(event: MessageEvent) => {
@@ -192,12 +194,35 @@ export function useChatWebSocket({
 
 	const joinChat = useCallback(
 		(chatId: number) => {
-			if (isConnected) {
-				sendMessage(ws.joinChat(chatId));
+			// Don't join if we're already in this chat
+			if (lastJoinedChatRef.current === chatId) {
+				return;
 			}
+
+			// Clear any pending join requests
+			if (joinChatTimeoutRef.current) {
+				clearTimeout(joinChatTimeoutRef.current);
+			}
+
+			// Debounce join requests
+			joinChatTimeoutRef.current = setTimeout(() => {
+				if (isConnected) {
+					lastJoinedChatRef.current = chatId;
+					sendMessage(ws.joinChat(chatId));
+				}
+			}, 100); // 100ms debounce
 		},
 		[isConnected, sendMessage, ws],
 	);
+
+	// Cleanup timeout on unmount
+	useEffect(() => {
+		return () => {
+			if (joinChatTimeoutRef.current) {
+				clearTimeout(joinChatTimeoutRef.current);
+			}
+		};
+	}, []);
 
 	return {
 		isConnected,

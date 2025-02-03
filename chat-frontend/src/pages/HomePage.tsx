@@ -1,11 +1,9 @@
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { initialMessageAtom, pendingMessageAtom } from "@/atoms/chat";
 import { useChat } from "@/hooks/useChat";
 import { useChatWebSocket } from "@/hooks/useChatWebSocket";
-import { Home, Plus, Trash2, X } from "lucide-react";
 import { useSetAtom } from "jotai";
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -74,27 +72,6 @@ export default function HomePage() {
 
 	const loadChat = (chatId: number) => {
 		navigate(`/users/${userId}/chat?chat=${chatId}`);
-	};
-
-	const toggleChatSelection = (chatId: number) => {
-		setSelectedChats((prev) => {
-			const newSet = new Set(prev);
-			if (newSet.has(chatId)) {
-				newSet.delete(chatId);
-			} else {
-				newSet.add(chatId);
-			}
-			return newSet;
-		});
-	};
-
-	const selectAllChats = () => {
-		setSelectedChats(new Set(chats.map((chat) => chat.id)));
-	};
-
-	const clearSelection = () => {
-		setSelectedChats(new Set());
-		setSelectMode(false);
 	};
 
 	return (

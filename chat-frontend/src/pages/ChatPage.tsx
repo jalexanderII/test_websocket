@@ -3,13 +3,11 @@ import { ChatHeader } from "@/components/chat/ChatMain/ChatHeader";
 import { ChatInput } from "@/components/chat/ChatMain/ChatInput";
 import { MessageList } from "@/components/chat/ChatMain/MessageList";
 import { ChatSidebar } from "@/components/chat/ChatSidebar";
-import { Button } from "@/components/ui/button";
 import { initialMessageAtom, pendingMessageAtom } from "@/atoms/chat";
 import { useChat } from "@/hooks/useChat";
 import { useChatWebSocket } from "@/hooks/useChatWebSocket";
-import { Home } from "lucide-react";
 import { useAtomValue, useSetAtom } from "jotai";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 export default function ChatPage() {
@@ -76,31 +74,39 @@ export default function ChatPage() {
 		}
 	};
 
-	const handleChatSelect = (chatId: number) => {
-		loadChat(chatId);
-		joinChat(chatId);
-	};
-
+	// biome-ignore lint/correctness/useExhaustiveDependencies: This effect should only run on URL changes to prevent infinite loops with URL updates
 	useEffect(() => {
 		const chatId = searchParams.get("chat");
 
 		if (chatId) {
 			const parsedChatId = Number.parseInt(chatId, 10);
-			if (!Number.isNaN(parsedChatId)) {
+			if (!Number.isNaN(parsedChatId) && parsedChatId !== currentChatId) {
 				// If we have a pending message for this chat, add it to the UI immediately
 				if (pendingMessage && pendingMessage.chat_id === parsedChatId) {
 					setMessages([pendingMessage]);
 					setPendingMessage(null);
 				}
-				loadChat(parsedChatId);
-				joinChat(parsedChatId);
+				// Load chat first, then join after messages are loaded
+				loadChat(parsedChatId).then(() => {
+					joinChat(parsedChatId);
+				});
 			}
 		}
-	}, [searchParams, loadChat, joinChat, setMessages, pendingMessage, setPendingMessage]);
+	}, [searchParams]);
 
-	// Add new effect to handle URL updates when chat ID changes
+	// Only update URL if chat ID changes from a user action (not from URL)
+	const lastUserActionRef = useRef<number | null>(null);
+	
+	const handleChatSelect = (chatId: number) => {
+		lastUserActionRef.current = chatId;
+		loadChat(chatId).then(() => {
+			joinChat(chatId);
+		});
+	};
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: This effect updates URL on user-initiated chat changes only
 	useEffect(() => {
-		if (currentChatId) {
+		if (currentChatId && lastUserActionRef.current === currentChatId) {
 			const chatParam = searchParams.get("chat");
 			if (!chatParam || Number(chatParam) !== currentChatId) {
 				const newSearchParams = new URLSearchParams(searchParams);
@@ -108,7 +114,7 @@ export default function ChatPage() {
 				navigate(`/users/${userId}/chat?${newSearchParams.toString()}`, { replace: true });
 			}
 		}
-	}, [currentChatId, searchParams, userId, navigate]);
+	}, [currentChatId]);
 
 	return (
 		<div className="min-h-screen bg-background flex">
