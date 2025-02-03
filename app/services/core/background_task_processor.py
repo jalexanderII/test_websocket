@@ -155,7 +155,7 @@ class BackgroundTaskProcessor:
         task_id = task_id or str(uuid.uuid4())
         logger.info("Adding new task with ID: %s", task_id)
 
-        # Store initial task metadata with RUNNING state since tasks start immediately
+        # Store initial task metadata with PENDING state
         task_data = {
             "status": TaskStatus.RUNNING,  # Tasks start in RUNNING state
             "created_at": datetime.now(UTC).isoformat(),
@@ -169,12 +169,14 @@ class BackgroundTaskProcessor:
         # Check if function is already async
         is_async = inspect.iscoroutinefunction(func)
 
-        # Create and start task immediately
-        coro_func = self._execute_async_task if is_async else self._execute_sync_task
-        coro = coro_func(task_id, func, *args, **kwargs)
+        # Create and start task with a small delay to allow subscription setup
+        async def delayed_start():
+            await asyncio.sleep(0.1)  # Small delay to allow subscription setup
+            coro_func = self._execute_async_task if is_async else self._execute_sync_task
+            return await coro_func(task_id, func, *args, **kwargs)
 
         # Create and store task
-        task = asyncio.create_task(coro, name=task_id)
+        task = asyncio.create_task(delayed_start(), name=task_id)
         serializable_task = SerializableTask(task)
 
         # Store task references
@@ -201,7 +203,9 @@ class BackgroundTaskProcessor:
         async with self._semaphore:
             try:
                 await self._update_task_status(task_id, TaskStatus.RUNNING)
+                logger.debug("[BackgroundTaskProcessor] Executing task %s with function %s", task_id, func.__name__)
                 result = await func(*args, **kwargs)
+                logger.debug("[BackgroundTaskProcessor] Task %s completed with raw result: %s", task_id, result)
                 current_task = asyncio.current_task()
                 if current_task and current_task.cancelled():
                     logger.info("Task %s was cancelled during execution", task_id)
@@ -304,13 +308,21 @@ class BackgroundTaskProcessor:
         await self._update_task_data(task_id, status)
 
     async def _store_task_result(self, task_id: str, result: Any) -> None:
-        serialized_result = self._serialize_result(result)
-        await self._update_task_data(
-            task_id,
-            TaskStatus.COMPLETED,
-            additional_data={"result": serialized_result},
-            publish_data={"result": serialized_result},
-        )
+        """Store task result in Redis and publish update"""
+        logger.debug("[BackgroundTaskProcessor] Storing result for task %s: %s", task_id, result)
+        try:
+            serialized_result = self._serialize_result(result)
+            logger.debug("[BackgroundTaskProcessor] Serialized result: %s", serialized_result)
+            await self._update_task_data(
+                task_id,
+                TaskStatus.COMPLETED,
+                additional_data={"result": serialized_result},
+                publish_data={"result": serialized_result},
+            )
+        except Exception as e:
+            logger.error("[BackgroundTaskProcessor] Failed to store task result: %s", str(e))
+            await self._store_task_error(task_id, f"Failed to store task result: {str(e)}")
+            raise
 
     async def _store_task_error(self, task_id: str, error: str) -> None:
         await self._update_task_data(
