@@ -7,8 +7,8 @@ import { ChatSidebar } from "@/components/chat/ChatSidebar";
 import { useChat } from "@/hooks/useChat";
 import { useChatWebSocket } from "@/hooks/useChatWebSocket";
 import { useAtomValue, useSetAtom } from "jotai";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useEffect, useRef } from "react";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 export default function ChatPage() {
 	const navigate = useNavigate();
