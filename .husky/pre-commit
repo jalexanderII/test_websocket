@@ -1,2 +1,2 @@
 cd chat-frontend
-bun test
+bun lint
