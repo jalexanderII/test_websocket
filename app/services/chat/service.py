@@ -1,6 +1,4 @@
-import uuid
 from typing import (
-    AsyncGenerator,
     List,
     TypeVar,
 )
@@ -11,12 +9,10 @@ from app.config.logger import get_logger
 from app.config.redis import async_redis
 from app.schemas.chat import Chat, Message, MessageCreate
 from app.services.ai.adapter import ChatMessage
-from app.services.ai.pipelines.base import AIResponse, AIResponseType
 from app.services.ai.service import AIService
 from app.services.chat.repository import ChatRepository
 from app.utils.async_redis_utils.lrucache import AsyncLRUCache
 from app.utils.async_redis_utils.queue import AsyncQueue
-from app.utils.universal_serializer import safe_json_dumps
 
 logger = get_logger(__name__)
 
@@ -87,90 +83,6 @@ class ChatService:
         await self.chat_cache.remove(str(message.chat_id))
 
         return db_message
-
-    async def stream_ai_response(
-        self,
-        chat_id: int,
-        user_message: str,
-        task_id: str,
-    ) -> AsyncGenerator[str, None]:
-        logger.info("Starting AI response stream for chat %s", chat_id)
-
-        chat = await self.get_chat(chat_id)
-        if not chat:
-            logger.error("Chat %s not found", chat_id)
-            raise ValueError("Chat not found")
-
-        # Get history
-        history = await self.get_chat_history(chat_id)
-        logger.debug("Got chat history with %d messages", len(history))
-
-        # Create empty AI message in DB
-        message = MessageCreate(chat_id=chat_id, content="", is_ai=True)
-        db_message = self.repository.create_message(message, task_id=task_id)
-        logger.info("Created initial AI message with ID %s and task_id %s", db_message.id, task_id)
-
-        complete_response = ""
-        try:
-            logger.info("Starting to stream AI response")
-            async for token in self.ai_service.stream_chat_response(user_message, history=history):
-                logger.debug("Received token: %s", token)
-                complete_response += token
-                yield token
-
-            logger.info("Stream completed, updating message in DB")
-            # Update message with complete response
-            self.repository.update_message_content(db_message.id, complete_response)
-            logger.info("Updated message %s with complete response (length: %d)", db_message.id, len(complete_response))
-
-            await self.chat_cache.remove(str(chat_id))
-
-        except Exception:
-            logger.exception("Error during streaming")
-            if complete_response:
-                logger.info("Saving partial response before re-raising")
-                try:
-                    self.repository.update_message_content(db_message.id, complete_response)
-                except Exception:
-                    logger.exception("Failed to save partial response")
-            raise
-
-    async def stream_structured_ai_response(
-        self,
-        chat_id: int,
-        user_message: str,
-        task_id: str,
-    ) -> AsyncGenerator[BaseModel, None]:
-        chat = await self.get_chat(chat_id)
-        if not chat:
-            raise ValueError("Chat not found")
-
-        history = await self.get_chat_history(chat_id)
-
-        message = MessageCreate(chat_id=chat_id, content="", is_ai=True)
-        db_message = self.repository.create_message(message, task_id=task_id)
-        logger.info("Created initial structured AI message with ID %s and task_id %s", db_message.id, task_id)
-
-        structured_id = str(uuid.uuid4())
-
-        try:
-            async for stream_struc in self.ai_service.stream_structured_response(
-                user_message,
-                StructuredResponse,
-                history=history,
-            ):
-                response = AIResponse(
-                    content=safe_json_dumps(stream_struc),
-                    response_type=AIResponseType.STRUCTURED,
-                    metadata={"structured_id": structured_id},
-                )
-                yield response
-                # Update message with latest response
-                self.repository.update_message_content(db_message.id, response.model_dump_json())
-
-        except Exception:
-            # Don't need to handle partial responses as we update continuously
-            raise
 
     async def delete_chats(self, chat_ids: List[int]) -> None:
         """Delete multiple chats by their IDs"""

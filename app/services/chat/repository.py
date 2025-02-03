@@ -74,14 +74,14 @@ class ChatRepository:
             return (0, 0)
 
         try:
-            with self.db.begin():
-                # Delete messages first due to foreign key constraint
-                deleted_messages = (
-                    self.db.query(MessageDB).filter(MessageDB.chat_id.in_(chat_ids)).delete(synchronize_session=False)
-                )
+            # Delete messages first due to foreign key constraint
+            deleted_messages = (
+                self.db.query(MessageDB).filter(MessageDB.chat_id.in_(chat_ids)).delete(synchronize_session=False)
+            )
 
-                deleted_chats = self.db.query(ChatDB).filter(ChatDB.id.in_(chat_ids)).delete(synchronize_session=False)
+            deleted_chats = self.db.query(ChatDB).filter(ChatDB.id.in_(chat_ids)).delete(synchronize_session=False)
 
+            self.db.commit()
             return (deleted_chats, deleted_messages)
 
         except Exception:

@@ -1,3 +1,5 @@
+import type { JsonValue } from "@/types/json";
+
 // API Types (matching backend)
 export interface APIMessage {
 	id: number;
@@ -27,6 +29,7 @@ export interface Message {
 	task_id?: string;
 	structured?: JsonValue;
 	metadata?: Record<string, JsonValue>;
+	error?: boolean;
 }
 
 export interface Chat {
@@ -36,30 +39,3 @@ export interface Chat {
 	created_at: string;
 	updated_at: string;
 }
-
-// WebSocket message types
-export interface CreateChatMessage {
-	action: "create_chat";
-	user_id: number;
-	initial_message?: string;
-}
-
-export interface SendMessagePayload {
-	action: "send_message";
-	chat_id: number;
-	content: string;
-}
-
-export interface JoinChatPayload {
-	action: "join_chat";
-	chat_id: number;
-}
-
-// Type for handling any JSON value
-export type JsonValue =
-	| string
-	| number
-	| boolean
-	| null
-	| JsonValue[]
-	| { [key: string]: JsonValue };

@@ -1,7 +1,6 @@
 import asyncio
 import json
 import uuid
-from typing import Dict
 
 from fastapi import WebSocket
 from pydantic import ValidationError
@@ -230,7 +229,6 @@ class WebSocketHandler:
                 await self._monitor_task(message_task_id)
 
                 # Update chat title for initial message
-
                 title_process_id = await background_processor.add_task(
                     self.update_title_wrapper, chat_id, initial_message
                 )
@@ -437,38 +435,14 @@ class WebSocketHandler:
 
                     if message and message["type"] == "message":
                         try:
-                            data = json.loads(message["data"])
-                            status = data.get("status")
-
-                            # Handle different status updates
-                            if status == TaskStatus.COMPLETED:
-                                await self.manager.broadcast_to_user(
-                                    self.user_id,
-                                    safe_json_dumps(
-                                        {
-                                            "type": "task_completed",
-                                            "task_id": task_id,
-                                            "result": data.get("data", {}).get("result", {}),
-                                        }
-                                    ),
-                                )
-                                break
-                            elif status == TaskStatus.FAILED:
-                                await self.manager.broadcast_to_user(
-                                    self.user_id,
-                                    safe_json_dumps(
-                                        {
-                                            "type": "task_failed",
-                                            "task_id": task_id,
-                                            "error": data.get("data", {}).get("error", "Unknown error"),
-                                        }
-                                    ),
-                                )
-                                break
-                            elif status == TaskStatus.CANCELLED:
-                                await self.manager.broadcast_to_user(
-                                    self.user_id, safe_json_dumps({"type": "task_cancelled", "task_id": task_id})
-                                )
+                            data = TaskData(**json.loads(message["data"]))
+                            await self._handle_task_update(data)
+                            # If the status indicates completion, break the loop
+                            if data.get("status", "") in [
+                                TaskStatus.COMPLETED,
+                                TaskStatus.FAILED,
+                                TaskStatus.CANCELLED,
+                            ]:
                                 break
                         except json.JSONDecodeError:
                             logger.warning("Failed to decode message data: %s", message["data"])
@@ -482,67 +456,3 @@ class WebSocketHandler:
         except Exception as e:
             logger.exception("Error monitoring task %s", task_id)
             await self._send_error(str(e))
-
-    async def _generate_structured_response(self, chat_id: int, user_message: str) -> Dict:
-        """Generate a structured AI response"""
-        try:
-            latest_response = None
-            task_id = str(uuid.uuid4())  # Generate a task ID for this response
-            async for response in self.chat_service.stream_structured_ai_response(
-                chat_id=chat_id, user_message=user_message, task_id=task_id
-            ):
-                latest_response = response
-                # Send progress update
-                await self.manager.broadcast_to_user(
-                    self.user_id,
-                    safe_json_dumps(
-                        {
-                            "type": "structured_response",
-                            "content": response.model_dump() if hasattr(response, "model_dump") else response,
-                            "task_id": task_id,
-                            "chat_id": chat_id,
-                            "metadata": response.model_dump().get("metadata")
-                            if hasattr(response, "model_dump")
-                            else None,
-                        }
-                    ),
-                )
-            return {
-                "content": (
-                    latest_response
-                    if isinstance(latest_response, dict)
-                    else latest_response.model_dump()
-                    if latest_response
-                    else {}
-                ),
-                "task_id": task_id,
-            }
-        except Exception:
-            logger.exception("Error generating structured response")
-            raise
-
-    async def _generate_standard_response(self, chat_id: int, user_message: str) -> Dict:
-        """Generate a standard AI response"""
-        try:
-            complete_response = ""
-            task_id = str(uuid.uuid4())  # Generate a task ID for this response
-            async for token in self.chat_service.stream_ai_response(
-                chat_id=chat_id, user_message=user_message, task_id=task_id
-            ):
-                complete_response += token
-                # Send progress update
-                await self.manager.broadcast_to_user(
-                    self.user_id,
-                    safe_json_dumps(
-                        {
-                            "type": "token",
-                            "content": token,
-                            "chat_id": chat_id,
-                            "task_id": task_id,
-                        }
-                    ),
-                )
-            return {"content": complete_response, "task_id": task_id}
-        except Exception:
-            logger.exception("Error generating standard response")
-            raise
