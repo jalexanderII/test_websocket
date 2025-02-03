@@ -1,9 +1,9 @@
-import { Button } from "@/components/ui/button";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { Home } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import type { Chat } from "@/types/chat";
-import { HomeChatList } from "./HomeChatList";
+import { Home } from "lucide-react";
 import { ChatPageList } from "./ChatPageList";
+import { HomeChatList } from "./HomeChatList";
 
 interface ChatSidebarProps {
 	chats: Chat[];
@@ -49,4 +49,4 @@ export function ChatSidebar({
 			</ErrorBoundary>
 		</div>
 	);
-} 
+}

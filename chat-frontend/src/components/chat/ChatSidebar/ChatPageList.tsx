@@ -6,10 +6,5 @@ type ChatPageListProps = Omit<BaseChatListProps, "onChatSelect"> & {
 
 export function ChatPageList(props: ChatPageListProps) {
 	const { onLoadAndJoinChat, ...rest } = props;
-	return (
-		<BaseChatList
-			{...rest}
-			onChatSelect={onLoadAndJoinChat}
-		/>
-	);
-} 
+	return <BaseChatList {...rest} onChatSelect={onLoadAndJoinChat} />;
+}

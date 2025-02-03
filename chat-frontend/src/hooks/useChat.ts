@@ -15,7 +15,9 @@ import { useNavigate } from "react-router-dom";
 
 export function useChat(userId: string) {
 	const navigate = useNavigate();
-	const chatCacheRef = useRef<Map<number, { messages: Message[], lastFetched: number }>>(new Map());
+	const chatCacheRef = useRef<
+		Map<number, { messages: Message[]; lastFetched: number }>
+	>(new Map());
 	const loadingRef = useRef<Set<number>>(new Set());
 
 	const [isStreaming, setIsStreaming] = useAtom(streamingAtom);
@@ -49,7 +51,8 @@ export function useChat(userId: string) {
 				// Check cache first
 				const cached = chatCacheRef.current.get(chatId);
 				const now = Date.now();
-				if (cached && (now - cached.lastFetched) < 5000) { // 5 second cache
+				if (cached && now - cached.lastFetched < 5000) {
+					// 5 second cache
 					setMessages(cached.messages);
 					setCurrentChatId(chatId);
 					return;
@@ -60,11 +63,11 @@ export function useChat(userId: string) {
 
 				const chat = await chatApi.fetchChat(chatId);
 				const formattedMessages = chat.messages.map(formatAPIMessage);
-				
+
 				// Update cache
 				chatCacheRef.current.set(chatId, {
 					messages: formattedMessages,
-					lastFetched: now
+					lastFetched: now,
 				});
 
 				// Only update state if this is still the current request

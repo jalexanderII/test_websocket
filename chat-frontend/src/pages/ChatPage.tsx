@@ -1,9 +1,9 @@
+import { initialMessageAtom, pendingMessageAtom } from "@/atoms/chat";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { ChatHeader } from "@/components/chat/ChatMain/ChatHeader";
 import { ChatInput } from "@/components/chat/ChatMain/ChatInput";
 import { MessageList } from "@/components/chat/ChatMain/MessageList";
 import { ChatSidebar } from "@/components/chat/ChatSidebar";
-import { initialMessageAtom, pendingMessageAtom } from "@/atoms/chat";
 import { useChat } from "@/hooks/useChat";
 import { useChatWebSocket } from "@/hooks/useChatWebSocket";
 import { useAtomValue, useSetAtom } from "jotai";
@@ -96,7 +96,7 @@ export default function ChatPage() {
 
 	// Only update URL if chat ID changes from a user action (not from URL)
 	const lastUserActionRef = useRef<number | null>(null);
-	
+
 	const handleChatSelect = (chatId: number) => {
 		lastUserActionRef.current = chatId;
 		loadChat(chatId).then(() => {
@@ -111,7 +111,9 @@ export default function ChatPage() {
 			if (!chatParam || Number(chatParam) !== currentChatId) {
 				const newSearchParams = new URLSearchParams(searchParams);
 				newSearchParams.set("chat", currentChatId.toString());
-				navigate(`/users/${userId}/chat?${newSearchParams.toString()}`, { replace: true });
+				navigate(`/users/${userId}/chat?${newSearchParams.toString()}`, {
+					replace: true,
+				});
 			}
 		}
 	}, [currentChatId]);

@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Plus, Trash2, X } from "lucide-react";
 import type { Chat } from "@/types/chat";
+import { Plus, Trash2, X } from "lucide-react";
 
 export interface BaseChatListProps {
 	chats: Chat[];
@@ -122,4 +122,4 @@ export function BaseChatList({
 			</div>
 		</div>
 	);
-} 
+}

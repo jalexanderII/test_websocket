@@ -12,7 +12,7 @@ import {
 	createErrorMessage,
 	createStreamingMessage,
 } from "@/utils/messageFormatters";
-import { useCallback, useRef, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { useWebSocketService } from "./useWebSocketService";
 
 interface UseChatWebSocketProps {
@@ -68,13 +68,15 @@ export function useChatWebSocket({
 						setIsStreaming(true);
 					}
 					setMessages((prev: Message[]) => {
-						const isDuplicate = prev.some(msg => 
-							msg.id === messageData.message.id || 
-							(msg.chat_id === messageData.message.chat_id && 
-							 msg.text === messageData.message.content && 
-							 msg.sender === (messageData.message.is_ai ? "assistant" : "user"))
+						const isDuplicate = prev.some(
+							(msg) =>
+								msg.id === messageData.message.id ||
+								(msg.chat_id === messageData.message.chat_id &&
+									msg.text === messageData.message.content &&
+									msg.sender ===
+										(messageData.message.is_ai ? "assistant" : "user")),
 						);
-						
+
 						if (isDuplicate) {
 							return prev;
 						}

@@ -45,7 +45,9 @@ export const chatApi = {
 		);
 
 		if (!response.ok) {
-			const errorData = await response.json().catch(() => ({ detail: "Failed to cleanup empty chats" }));
+			const errorData = await response
+				.json()
+				.catch(() => ({ detail: "Failed to cleanup empty chats" }));
 			throw new Error(errorData.detail || "Failed to cleanup empty chats");
 		}
 

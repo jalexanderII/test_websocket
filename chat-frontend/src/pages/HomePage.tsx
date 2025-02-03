@@ -1,13 +1,13 @@
+import { initialMessageAtom, pendingMessageAtom } from "@/atoms/chat";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { ChatSidebar } from "@/components/chat/ChatSidebar";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { initialMessageAtom, pendingMessageAtom } from "@/atoms/chat";
 import { useChat } from "@/hooks/useChat";
 import { useChatWebSocket } from "@/hooks/useChatWebSocket";
 import { useSetAtom } from "jotai";
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ChatSidebar } from "@/components/chat/ChatSidebar";
 
 export default function HomePage() {
 	const navigate = useNavigate();
@@ -96,7 +96,9 @@ export default function HomePage() {
 					});
 				}}
 				onStartNewChat={handleStartNewChat}
-				onSelectAll={() => setSelectedChats(new Set(chats.map((chat) => chat.id)))}
+				onSelectAll={() =>
+					setSelectedChats(new Set(chats.map((chat) => chat.id)))
+				}
 				onClearSelection={() => {
 					setSelectedChats(new Set());
 					setSelectMode(false);
@@ -135,4 +137,4 @@ export default function HomePage() {
 			</div>
 		</div>
 	);
-} 
+}
