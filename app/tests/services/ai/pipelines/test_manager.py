@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.services.ai.adapter import ChatMessage, OpenAIAdapter
-from app.services.ai.pipelines.base import AIResponse, BasePipeline
+from app.services.ai.pipelines.base import AIResponse, AIResponseType, BasePipeline
 from app.services.ai.pipelines.manager import PipelineManager
 from app.services.ai.pipelines.planning import PlanDetails, PlanningPipeline
 from app.services.ai.pipelines.standard import StandardPipeline
@@ -39,7 +39,7 @@ def mock_pipeline(mock_ai_service):
             self, message: str, history: Sequence[ChatMessage] | None = None
         ) -> AsyncGenerator[AIResponse, None]:
             async def generate():
-                yield AIResponse(content="mock response", response_type="stream")
+                yield AIResponse(content="mock response", response_type=AIResponseType.STREAM)
 
             return generate()
 

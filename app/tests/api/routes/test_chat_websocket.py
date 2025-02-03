@@ -14,7 +14,7 @@ from app.api.handlers.websocket.connection_manager import ConnectionManager
 from app.api.handlers.websocket.websocket_handler import WebSocketHandler
 from app.schemas.chat import Chat
 from app.schemas.websocket import CreateChatMessage, SendMessageRequest
-from app.services.ai.pipelines.base import AIResponse
+from app.services.ai.pipelines.base import AIResponse, AIResponseType
 from app.services.chat.service import ChatService
 from app.services.core.background_task_processor import TaskStatus
 from app.utils.async_redis_utils.connection import AsyncConnectionManager
@@ -278,7 +278,7 @@ async def test_websocket_handler_send_message(
 
         class MockPipeline:
             async def execute(self, *args, **kwargs):
-                yield AIResponse(content="Test response", response_type="stream")
+                yield AIResponse(content="Test response", response_type=AIResponseType.STREAM)
 
         mock_get_pipeline.return_value = MockPipeline()
 
@@ -413,7 +413,7 @@ async def test_websocket_handler_structured_response(
             async def execute(self, *args, **kwargs):
                 yield AIResponse(
                     content=safe_json_dumps({"answer": "Test answer", "reason": "Test reason"}),
-                    response_type="structured",
+                    response_type=AIResponseType.STRUCTURED,
                 )
 
         mock_get_pipeline.return_value = MockPipeline()

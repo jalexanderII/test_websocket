@@ -9,7 +9,7 @@ from app.api.handlers.websocket.connection_manager import ConnectionManager
 from app.api.handlers.websocket.websocket_handler import WebSocketHandler
 from app.schemas.websocket import SendMessageRequest
 from app.services.ai.adapter import ChatMessage
-from app.services.ai.pipelines.base import AIResponse
+from app.services.ai.pipelines.base import AIResponse, AIResponseType
 from app.services.chat.service import ChatService
 from app.services.core.background_task_processor import TaskStatus
 from app.utils.universal_serializer import safe_json_dumps
@@ -78,14 +78,16 @@ class MockPipeline:
     ) -> AsyncGenerator[AIResponse, None]:
         # Simulate a multi-step pipeline
         # Step 1: Stream some tokens
-        yield AIResponse(content="First", response_type="stream")
-        yield AIResponse(content="Response", response_type="stream")
+        yield AIResponse(content="First", response_type=AIResponseType.STREAM)
+        yield AIResponse(content="Response", response_type=AIResponseType.STREAM)
 
         # Step 2: Send structured data
-        yield AIResponse(content=safe_json_dumps({"step": "planning", "details": "test"}), response_type="structured")
+        yield AIResponse(
+            content=safe_json_dumps({"step": "planning", "details": "test"}), response_type=AIResponseType.STRUCTURED
+        )
 
         # Step 3: Final stream
-        yield AIResponse(content="Final response", response_type="stream")
+        yield AIResponse(content="Final response", response_type=AIResponseType.STREAM)
 
 
 @pytest.mark.asyncio
@@ -109,7 +111,8 @@ async def test_handle_send_message(handler, mock_connection_manager, mock_chat_s
         assert mock_chat_service.send_message.call_count >= 1
 
         # Verify background processor was used
-        assert mock_background_processor.add_task.call_count == 1
+        # Two tasks: title update and pipeline processing
+        assert mock_background_processor.add_task.call_count == 2
         assert mock_background_processor.get_task_result.call_count >= 1
 
         # Verify messages were broadcast

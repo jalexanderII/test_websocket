@@ -101,8 +101,7 @@ async def test_error_handling(ai_service):
     ai_service.adapter.stream_response = error_stream
 
     with pytest.raises(Exception, match="Test error"):
-        async for _ in ai_service.stream_chat_response("test"):
-            pass  # We should never get here
+        await anext(ai_service.stream_chat_response("test"))
 
 
 @pytest.mark.asyncio
