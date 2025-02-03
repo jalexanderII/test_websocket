@@ -2,9 +2,8 @@ import asyncio
 import json
 import uuid
 from functools import wraps
-from typing import Awaitable, Callable, TypeVar
+from typing import Any, Awaitable, Callable, TypeVar
 
-from api.handlers.websocket.task_monitor import TaskMonitor
 from fastapi import WebSocket
 
 from app.api.handlers.websocket.connection_manager import ConnectionManager
@@ -38,6 +37,113 @@ def with_error_handling(f: Callable[..., Awaitable[T]]) -> Callable[..., Awaitab
             raise
 
     return wrapper
+
+
+class TaskMonitor:
+    """Simplified task monitoring"""
+
+    def __init__(self, handler: "WebSocketHandler"):
+        self.handler = handler
+
+    async def _handle_task_update(self, task_data: TaskData) -> Any:
+        """Handle a task update from Redis and return the result"""
+        try:
+            status = task_data.get("status")
+            task_id = task_data.get("task_id", "")  # Ensure we have a string for task_id
+            logger.debug("[TaskMonitor] Processing task update - status: %s, data: %s", status, task_data)
+
+            if status == TaskStatus.COMPLETED:
+                result = task_data.get("data", {}).get("result")
+                logger.debug("[TaskMonitor] Task completed with result: %s", result)
+                await self.handler.broadcast(
+                    "task_completed",
+                    task_id=task_id,
+                    result=result,
+                )
+                return result
+            elif status == TaskStatus.FAILED:
+                error = task_data.get("error", "Unknown error")
+                logger.debug("[TaskMonitor] Task failed with error: %s", error)
+                await self.handler.broadcast(
+                    "task_failed",
+                    task_id=task_id,
+                    error=error,
+                )
+                raise Exception(error)
+            elif status == TaskStatus.CANCELLED:
+                logger.debug("[TaskMonitor] Task was cancelled")
+                await self.handler.broadcast(
+                    "task_cancelled",
+                    task_id=task_id,
+                )
+                raise Exception("Task cancelled")
+            return None
+        except Exception as e:
+            logger.exception("Error handling task update")
+            await self.handler._send_error(str(e))
+            raise
+
+    async def monitor_background_task(self, task_id: str, timeout_seconds: float = 30.0) -> Any:
+        """Monitor a background task using Redis pub/sub and return the result on completion"""
+        try:
+            # Get Redis pubsub connection from background processor
+            pubsub = await background_processor.subscribe_to_task_updates(task_id)
+
+            try:
+                # Set timeout
+                start_time = asyncio.get_event_loop().time()
+
+                # Check initial status in case task completed before we subscribed
+                task_data = await background_processor.get_task_result(task_id)
+                logger.debug("[TaskMonitor] Initial task data for %s: %s", task_id, task_data)
+
+                if task_data:
+                    logger.debug(
+                        "[TaskMonitor] Task status: %s, result: %s", task_data.get("status"), task_data.get("result")
+                    )
+
+                if task_data and task_data["status"] in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
+                    return await self._handle_task_update(task_data)
+
+                # Wait for updates
+                while True:
+                    # Check timeout
+                    if asyncio.get_event_loop().time() - start_time >= timeout_seconds:
+                        logger.warning("Task %s monitoring timed out after %.1f seconds", task_id, timeout_seconds)
+                        await self.handler.broadcast(
+                            "task_timeout",
+                            task_id=task_id,
+                            message=f"Task monitoring timed out after {timeout_seconds} seconds",
+                        )
+                        raise TimeoutError(f"Task {task_id} timed out")
+
+                    # Wait for message with timeout
+                    message = await pubsub.get_message(timeout=1.0)
+                    if message and message["type"] == "message":
+                        try:
+                            logger.debug("[TaskMonitor] Received message for %s: %s", task_id, message)
+                            data = json.loads(message["data"])
+                            result = await self._handle_task_update(data)
+                            # If the status indicates completion, return the result
+                            if data.get("status", "") in [
+                                TaskStatus.COMPLETED,
+                                TaskStatus.FAILED,
+                                TaskStatus.CANCELLED,
+                            ]:
+                                return result
+                        except json.JSONDecodeError:
+                            logger.warning("Failed to decode message data: %s", message["data"])
+                            continue
+
+            finally:
+                # Always unsubscribe and close connection
+                await pubsub.unsubscribe()
+                await pubsub.close()
+
+        except Exception as e:
+            logger.exception("Error monitoring task %s", task_id)
+            await self.handler._send_error(str(e))
+            raise
 
 
 class WebSocketHandler:
@@ -99,26 +205,58 @@ class WebSocketHandler:
 
     async def _handle_create_chat_message(self, message: CreateChatMessage):
         """Handle create chat message after validation"""
-        # Create chat in background
-        create_task_id = await background_processor.add_task(self.chat_service.create_chat, message.user_id)
-        result = await self.task_monitor.monitor_background_task(create_task_id)
 
-        if not isinstance(result, dict) or "id" not in result:
-            raise Exception("Invalid chat creation result")
+        # First, generate a task ID we'll use for both monitoring and task creation
+        create_task_id = str(uuid.uuid4())
+        logger.debug("[WebSocket] Generated task ID for chat creation: %s", create_task_id)
 
-        chat_id = result["id"]
-        logger.info("Chat created successfully with id: %s", chat_id)
+        # Set up monitoring BEFORE creating the task
+        pubsub = await background_processor.subscribe_to_task_updates(create_task_id)
+        try:
+            # Create chat in background with proper serialization
+            async def create_chat_wrapper(user_id: int):
+                chat = await self.chat_service.create_chat(user_id)
+                if not chat:
+                    logger.error("[WebSocket] Chat creation failed - no chat returned")
+                    raise Exception("Chat creation failed")
+                result = chat.model_dump()
+                logger.debug("[WebSocket] Chat created and serialized: %s", result)
+                return result
 
-        # Send chat_created event
-        await self.broadcast(
-            "chat_created",
-            chat_id=chat_id,
-            message=message.initial_message if message.initial_message else None,
-        )
+            # Now start the task with our pre-generated ID
+            await background_processor.add_task(create_chat_wrapper, message.user_id, task_id=create_task_id)
+            logger.debug("[WebSocket] Created background task for chat creation: %s", create_task_id)
 
-        # Handle initial message if provided
-        if message.initial_message:
-            await self._process_initial_chat_message(chat_id, message.initial_message)
+            # Monitor the task now that we're already subscribed
+            result = await self.task_monitor.monitor_background_task(create_task_id)
+            logger.debug("[WebSocket] Final task result: %s", result)
+
+            # Result should be a serialized Chat model
+            if not isinstance(result, dict):
+                logger.error("[WebSocket] Invalid chat creation result type: %s", type(result))
+                raise Exception("Invalid chat creation result")
+
+            if "id" not in result:
+                logger.error("[WebSocket] Chat result missing id field: %s", result)
+                raise Exception("Invalid chat creation result: missing id field")
+
+            chat_id = result["id"]
+            logger.info("Chat created successfully with id: %s", chat_id)
+
+            # Send chat_created event
+            await self.broadcast(
+                "chat_created",
+                chat_id=chat_id,
+            )
+
+            # Handle initial message if provided
+            if message.initial_message:
+                await self._process_initial_chat_message(chat_id, message.initial_message)
+
+        finally:
+            # Clean up subscription
+            await pubsub.unsubscribe()
+            await pubsub.close()
 
     async def _process_initial_chat_message(self, chat_id: int, initial_message: str):
         """Process the initial message for a newly created chat"""
@@ -204,9 +342,9 @@ class WebSocketHandler:
         task_id = await background_processor.add_task(self.chat_service.get_chat, message.chat_id)
         logger.info("[WebSocket] Created background task %s for joining chat", task_id)
 
-        result = await self.task_monitor.monitor_background_task(task_id, timeout=10.0)
-        if not result:
-            raise ValueError("Chat not found")
+        await self.task_monitor.monitor_background_task(task_id, timeout_seconds=10.0)
+        # The task monitor will raise an exception if the task fails or times out
+        # If we get here, the task completed successfully and result contains the chat
 
         logger.info("[WebSocket] Successfully joined chat: %s", message.chat_id)
         await self.broadcast("chat_joined", chat_id=message.chat_id)
@@ -284,104 +422,3 @@ class WebSocketHandler:
     async def _send_error(self, error: str) -> None:
         """Send an error message to the client"""
         await self.broadcast("error", message=error)
-
-    async def _handle_task_update(self, task_data: TaskData) -> None:
-        """Handle a task update from Redis"""
-        try:
-            status = task_data.get("status")
-            task_id = task_data.get("task_id", "")  # Ensure we have a string for task_id
-
-            if status == TaskStatus.COMPLETED:
-                await self.manager.broadcast_to_user(
-                    self.user_id,
-                    safe_json_dumps(
-                        {
-                            "type": "task_completed",
-                            "task_id": task_id,
-                            "result": task_data.get("result", {}),
-                        }
-                    ),
-                )
-            elif status == TaskStatus.FAILED:
-                await self.manager.broadcast_to_user(
-                    self.user_id,
-                    safe_json_dumps(
-                        {
-                            "type": "task_failed",
-                            "task_id": task_id,
-                            "error": task_data.get("error", "Unknown error"),
-                        }
-                    ),
-                )
-            elif status == TaskStatus.CANCELLED:
-                await self.manager.broadcast_to_user(
-                    self.user_id, safe_json_dumps({"type": "task_cancelled", "task_id": task_id})
-                )
-        except Exception as e:
-            logger.exception("Error handling task update")
-            await self._send_error(str(e))
-
-    async def _monitor_task(self, task_id: str, timeout_seconds: float = 30.0) -> None:
-        """Monitor a background task using Redis pub/sub
-
-        Args:
-            task_id: The ID of the task to monitor
-            timeout_seconds: Maximum time to wait for task completion in seconds
-        """
-        try:
-            # Get Redis pubsub connection from background processor
-            pubsub = await background_processor.subscribe_to_task_updates(task_id)
-
-            try:
-                # Set timeout
-                start_time = asyncio.get_event_loop().time()
-
-                # Check initial status in case task completed before we subscribed
-                task_data = await background_processor.get_task_result(task_id)
-                if task_data and task_data["status"] in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
-                    await self._handle_task_update(task_data)
-                    return
-
-                # Wait for updates
-                while True:
-                    # Check timeout
-                    if asyncio.get_event_loop().time() - start_time >= timeout_seconds:
-                        logger.warning("Task %s monitoring timed out after %.1f seconds", task_id, timeout_seconds)
-                        await self.manager.broadcast_to_user(
-                            self.user_id,
-                            safe_json_dumps(
-                                {
-                                    "type": "task_timeout",
-                                    "task_id": task_id,
-                                    "message": f"Task monitoring timed out after {timeout_seconds} seconds",
-                                }
-                            ),
-                        )
-                        break
-
-                    # Wait for message with timeout
-                    message = await pubsub.get_message(timeout=1.0)
-
-                    if message and message["type"] == "message":
-                        try:
-                            data = TaskData(**json.loads(message["data"]))
-                            await self._handle_task_update(data)
-                            # If the status indicates completion, break the loop
-                            if data.get("status", "") in [
-                                TaskStatus.COMPLETED,
-                                TaskStatus.FAILED,
-                                TaskStatus.CANCELLED,
-                            ]:
-                                break
-                        except json.JSONDecodeError:
-                            logger.warning("Failed to decode message data: %s", message["data"])
-                            continue
-
-            finally:
-                # Always unsubscribe and close connection
-                await pubsub.unsubscribe()
-                await pubsub.close()
-
-        except Exception as e:
-            logger.exception("Error monitoring task %s", task_id)
-            await self._send_error(str(e))

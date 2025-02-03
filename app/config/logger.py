@@ -1,7 +1,7 @@
 import logging
 
 
-def get_logger(logger_name: str, log_level: int = logging.INFO) -> logging.Logger:
+def get_logger(logger_name: str, log_level: int = logging.DEBUG) -> logging.Logger:
     logger = logging.getLogger(logger_name)
     logger.setLevel(log_level)
     logger.propagate = False  # Prevent log propagation to avoid double logging
