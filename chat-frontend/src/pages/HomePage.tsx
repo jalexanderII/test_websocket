@@ -108,7 +108,6 @@ export default function HomePage() {
 				onNavigateHome={() => navigate("/")}
 			/>
 
-			{/* Main Content Area */}
 			<div className="flex-1 flex items-center justify-center p-4">
 				<ErrorBoundary>
 					<div className="max-w-2xl w-full space-y-4">

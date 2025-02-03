@@ -6,7 +6,7 @@ import { MessageList } from "@/components/chat/ChatMain/MessageList";
 import { ChatSidebar } from "@/components/chat/ChatSidebar";
 import { useChat } from "@/hooks/useChat";
 import { useChatWebSocket } from "@/hooks/useChatWebSocket";
-import { useAtomValue, useSetAtom } from "jotai";
+import { useAtom } from "jotai";
 import { useEffect, useRef } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 
@@ -14,10 +14,8 @@ export default function ChatPage() {
 	const navigate = useNavigate();
 	const { userId } = useParams();
 	const [searchParams] = useSearchParams();
-	const initialMessage = useAtomValue(initialMessageAtom);
-	const pendingMessage = useAtomValue(pendingMessageAtom);
-	const setInitialMessage = useSetAtom(initialMessageAtom);
-	const setPendingMessage = useSetAtom(pendingMessageAtom);
+	const [initialMessage, setInitialMessage] = useAtom(initialMessageAtom);
+	const [pendingMessage, setPendingMessage] = useAtom(pendingMessageAtom);
 
 	if (!userId) {
 		return <div>User ID is required</div>;
